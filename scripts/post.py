@@ -1,25 +1,37 @@
-"""Post the oldest approved draft to Bluesky (and X, if enabled), then update its Telegram message.
+"""Post approved drafts to the platforms you picked for them, then update their Telegram messages.
 
-At most one post per run, and only once the last post is posting.min_hours_between_posts
-old, so drafts you approve together still go out spaced apart.
+Each run posts at most one draft per platform, and only once that platform's last post is
+posting.min_hours_between_posts old, so drafts you approve together still go out spaced apart.
 
-  python scripts/post.py              post the next approved draft, if one is due
+  python scripts/post.py              post what's due
   python scripts/post.py --now        don't wait for the spacing
   python scripts/post.py --dry-run    show what would be posted
 
-Env: BLUESKY_USERNAME, BLUESKY_PASSWORD (an app password), TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID;
-     X_API_KEY, X_API_KEY_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET if posting.platforms has "x"
+Env: BLUESKY_USERNAME and BLUESKY_PASSWORD (an app password) for Bluesky; LINKEDIN_ACCESS_TOKEN for
+     LinkedIn (from linkedin_login.py); X_API_KEY, X_API_KEY_SECRET, X_ACCESS_TOKEN and
+     X_ACCESS_TOKEN_SECRET for X; TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to update the messages.
 """
 import argparse
 import re
 from datetime import timedelta
 
+import linkedin_api
 import telegram_api
 from card import make_card
 from common import DRAFTS, POSTED, iso, load_config, now_utc, parse_iso, read_json, require_env, write_json
-from compose import X_LIMIT, post_text, review_buttons, review_caption
+from compose import (
+    LINKEDIN_LIMIT,
+    PLATFORMS,
+    X_LIMIT,
+    enabled_platforms,
+    pending,
+    post_text,
+    review_buttons,
+    review_caption,
+    settle,
+)
 
-MAX_ATTEMPTS = 3  # a draft that fails this many runs in a row is marked "failed"
+MAX_ATTEMPTS = 3  # a platform that fails this many runs in a row is given up on for that draft
 
 LINK = re.compile(r"https?://[^\s<>\"]+")
 TAG = re.compile(r"(?<![\w#])#([^\W\d_][\w-]*)")
@@ -55,10 +67,10 @@ def facets(client, text, models):
 
 def bluesky_result(uri, cid):
     did, rkey = uri.split("/")[2], uri.split("/")[-1]  # at://did:plc:…/app.bsky.feed.post/<rkey>
-    return {"bluesky_uri": uri, "bluesky_cid": cid, "bluesky_url": f"https://bsky.app/profile/{did}/post/{rkey}"}
+    return {"uri": uri, "cid": cid, "url": f"https://bsky.app/profile/{did}/post/{rkey}"}
 
 
-def post_bluesky(text, d, png):
+def post_bluesky(d, hashtag, png):
     from atproto import Client, models
 
     username, password = require_env("BLUESKY_USERNAME", "BLUESKY_PASSWORD")
@@ -82,11 +94,29 @@ def post_bluesky(text, d, png):
             uri=d["link"], title=d["title"], description=d.get("snippet") or "", thumb=thumb
         )
     )
+    text = post_text(d, hashtag)
     resp = client.send_post(text=text, facets=facets(client, text, models), embed=card, langs=["en"])
     return bluesky_result(resp.uri, resp.cid)
 
 
-def post_x(d, hashtag):
+def post_linkedin(d, hashtag, png):
+    """A link card posted as you, from your own profile."""
+    (token,) = require_env("LINKEDIN_ACCESS_TOKEN")
+    author = linkedin_api.person_urn(token)
+    thumbnail = None
+    try:
+        thumbnail = linkedin_api.upload_image(token, author, png)
+    except linkedin_api.LinkedInError as exc:
+        if exc.status == 401:
+            raise
+        print(f"LinkedIn thumbnail upload failed, posting without it: {exc}")
+    urn = linkedin_api.create_post(
+        token, author, post_text(d, hashtag, limit=LINKEDIN_LIMIT), d["link"], d["title"], d.get("snippet") or "", thumbnail
+    )
+    return {"urn": urn, "url": linkedin_api.post_url(urn) if urn else None}
+
+
+def post_x(d, hashtag, png):
     """Text only, with the link in a reply: X shows posts with links to fewer people."""
     import tweepy
 
@@ -97,73 +127,86 @@ def post_x(d, hashtag):
         client.create_tweet(text=f"Read the paper: {d['link']}", in_reply_to_tweet_id=tweet_id)
     except Exception as exc:
         print(f"X link reply failed: {exc}")
-    return {"tweet_id": tweet_id}
+    return {"tweet_id": tweet_id, "url": f"https://x.com/i/web/status/{tweet_id}"}
+
+
+POSTERS = {"bluesky": post_bluesky, "linkedin": post_linkedin, "x": post_x}
+
+
+def last_post(posted, platform):
+    times = [p["posted_at"] for p in posted if p.get("platform") == platform]
+    return parse_iso(max(times)) if times else None
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Post the next approved draft.")
+    parser = argparse.ArgumentParser(description="Post approved drafts.")
     parser.add_argument("--now", action="store_true", help="don't wait for posting.min_hours_between_posts")
     parser.add_argument("--dry-run", action="store_true", help="show what would be posted, post nothing")
     args = parser.parse_args()
 
     cfg = load_config()
-    posting = cfg["posting"]
-    hashtag = posting.get("hashtag")
-    platforms = posting.get("platforms", ["bluesky"])
+    hashtag = cfg["posting"].get("hashtag")
+    platforms = enabled_platforms(cfg)
+    gap = timedelta(hours=cfg["posting"].get("min_hours_between_posts", 2))
     drafts = read_json(DRAFTS, [])
     posted = read_json(POSTED, [])
     now = now_utc()
 
-    approved = sorted((d for d in drafts if d["status"] == "approved"), key=lambda d: d.get("approved_at", ""))
-    if not approved:
+    queued = [d for d in drafts if d["status"] == "approved"]
+    if not queued:
         print("Nothing approved to post.")
         return
     if not platforms:
-        print(f"{len(approved)} approved, but posting.platforms in config.json is empty, so nothing is posted.")
-        return
-    gap = timedelta(hours=posting.get("min_hours_between_posts", 2))
-    if posted and not args.now and now - parse_iso(posted[-1]["posted_at"]) < gap:
-        print(f"{len(approved)} approved, but the last post went out less than {gap} ago; trying next run.")
+        print(f"{len(queued)} approved, but posting.platforms in config.json is empty, so nothing is posted.")
         return
 
-    d = approved[0]
-    text = post_text(d, hashtag)
-    if args.dry_run:
-        print(f"Would post draft {d['id']} to {', '.join(platforms)}:\n\n{text}\n\nLink card: {d['title']}\n  {d['link']}")
-        return
+    errors, touched = [], []
+    for platform in platforms:
+        name = PLATFORMS[platform]
+        due = [d for d in queued if platform in pending(d)]
+        if not due:
+            continue
+        last = last_post(posted, platform)
+        if last and not args.now and now - last < gap:
+            print(f"{name}: {len(due)} queued, but the last post went out less than {gap} ago; trying next run.")
+            continue
+        d = min(due, key=lambda d: d.get("queued_at", {}).get(platform, ""))  # oldest tap first
+        if args.dry_run:
+            print(f"Would post draft {d['id']} to {name}:\n\n{post_text(d, hashtag)}\n\nLink card: {d['title']}\n  {d['link']}\n")
+            continue
 
-    png = make_card(d, cfg.get("name", "Neuro Paper Bot"))
-    result, errors = {}, []
-    if "bluesky" in platforms:
         try:
-            result.update(post_bluesky(text, d, png))
-            print(f"On Bluesky: {result['bluesky_url']}")
+            result = POSTERS[platform](d, hashtag, make_card(d, cfg.get("name", "Neuro Paper Bot")))
         except Exception as exc:
-            errors.append(f"Bluesky: {exc}")
-    if "x" in platforms:
-        try:
-            result.update(post_x(d, hashtag))
-            print(f"Posted to X: {result['tweet_id']}")
-        except Exception as exc:
-            errors.append(f"X: {exc}")
-
-    if result:
-        d.update(status="posted", posted_at=iso(now), **result)
-        posted.append(
-            {"id": d["id"], "doi": d["doi"], "title": d["title"], "venue": d["venue"], "posted_at": d["posted_at"], **result}
-        )
+            message = str(exc)[:200]
+            errors.append(f"{name}: {message}")
+            if getattr(exc, "status", None) == 401:  # the login, not this post: keep it queued until you log in again
+                d.setdefault("notes", {})[platform] = f"the {name} login has expired; run scripts/linkedin_login.py"
+            else:
+                attempts = d.setdefault("attempts", {})
+                attempts[platform] = attempts.get(platform, 0) + 1
+                if attempts[platform] >= MAX_ATTEMPTS:
+                    d.setdefault("failed", {})[platform] = message
+        else:
+            result["posted_at"] = iso(now)
+            d.setdefault("posted", {})[platform] = result
+            d.get("notes", {}).pop(platform, None)
+            posted.append(
+                {"id": d["id"], "doi": d["doi"], "title": d["title"], "venue": d["venue"], "platform": platform, **result}
+            )
+            print(f"Posted to {name}: {result.get('url') or '(no link returned)'}")
+        settle(d)
+        write_json(DRAFTS, drafts)  # saved after each post, so a later failure can't make it post twice
         write_json(POSTED, posted)
-    else:
-        d["post_attempts"] = d.get("post_attempts", 0) + 1
-        if d["post_attempts"] >= MAX_ATTEMPTS:
-            d.update(status="failed", error="; ".join(errors)[:200])
-    write_json(DRAFTS, drafts)
+        if d not in touched:
+            touched.append(d)
 
-    if d.get("tg_message_id") and d["status"] in ("posted", "failed"):
-        try:
-            telegram_api.edit_caption(d["tg_message_id"], review_caption(d, hashtag), review_buttons(d))
-        except telegram_api.TelegramError as exc:
-            print(f"Couldn't update the Telegram message: {exc}")
+    for d in touched:
+        if d.get("tg_message_id"):
+            try:
+                telegram_api.edit_caption(d["tg_message_id"], review_caption(d, hashtag, platforms), review_buttons(d, platforms))
+            except telegram_api.TelegramError as exc:
+                print(f"Couldn't update the Telegram message for draft {d['id']}: {exc}")
     if errors:
         # Fail the run so GitHub shows it (and emails you), even when another platform worked.
         raise SystemExit("Posting failed. " + "; ".join(errors))

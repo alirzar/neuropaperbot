@@ -2,11 +2,13 @@
 
   python scripts/review.py send             send drafts with status "ready", and expire old ones
   python scripts/review.py send --dry-run   save the cards in previews/ and print the captions instead
-  python scripts/review.py poll             apply your taps (Post, Skip, Undo) and reply edits
+  python scripts/review.py poll             apply your taps and reply edits
   python scripts/review.py chat-id          show the chat ID of whoever messaged the bot (for setup)
 
-Telegram holds taps and messages for 24 hours until the bot asks for them, so the
-hourly poll doesn't miss any. Only the chat in TELEGRAM_CHAT_ID can act on drafts.
+Each draft has a button for every platform in posting.platforms: tap one or more to queue the
+draft there. Skip drops it, and Undo takes back whatever hasn't been posted yet. Telegram holds
+taps and messages for 24 hours until the bot asks for them, so the hourly poll doesn't miss any.
+Only the chat in TELEGRAM_CHAT_ID can act on drafts.
 
 Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 """
@@ -16,27 +18,31 @@ from datetime import timedelta
 import telegram_api
 from card import PREVIEWS, make_card
 from common import DRAFTS, STATE, iso, load_config, now_utc, parse_iso, read_json, write_json
-from compose import hook_room, review_buttons, review_caption
+from compose import PLATFORMS, enabled_platforms, hook_room, review_buttons, review_caption, settle
 
 HELP = (
-    "Every weekday I send you a few drafts here. Tap ✅ Post or ❌ Skip under each one, "
-    "or reply to a draft with new wording to replace its hook. I check for taps once an hour."
+    "Every weekday I send you a few drafts here. Tap a platform's button under a draft to post it there "
+    "(you can tap more than one), or ❌ Skip. Reply to a draft with new wording to replace its hook. "
+    "I check for taps once an hour."
 )
 
 
-def refresh(d, hashtag):
+def refresh(d, cfg):
     """Redraw a draft's Telegram message to match its status."""
     if not d.get("tg_message_id"):
         return
+    platforms = enabled_platforms(cfg)
     try:
-        telegram_api.edit_caption(d["tg_message_id"], review_caption(d, hashtag), review_buttons(d))
+        telegram_api.edit_caption(
+            d["tg_message_id"], review_caption(d, cfg["posting"].get("hashtag"), platforms), review_buttons(d, platforms)
+        )
     except telegram_api.TelegramError as exc:
         print(f"Couldn't update the message for draft {d['id']}: {exc}")
 
 
 def send(dry_run):
     cfg = load_config()
-    hashtag = cfg["posting"].get("hashtag")
+    hashtag, platforms = cfg["posting"].get("hashtag"), enabled_platforms(cfg)
     name = cfg.get("name", "Neuro Paper Bot")
     drafts = read_json(DRAFTS, [])
     now = now_utc()
@@ -47,7 +53,7 @@ def send(dry_run):
             print(f"Expiring draft {d['id']}: {d['title'][:70]}")
             if not dry_run:
                 d["status"] = "expired"
-                refresh(d, hashtag)
+                refresh(d, cfg)
                 write_json(DRAFTS, drafts)
 
     ready = [d for d in drafts if d["status"] == "ready"]
@@ -56,13 +62,13 @@ def send(dry_run):
     for d in ready:
         as_sent = {**d, "status": "sent"}
         png = make_card(d, name)
-        caption = review_caption(as_sent, hashtag)
+        caption = review_caption(as_sent, hashtag, platforms)
         if dry_run:
             PREVIEWS.mkdir(exist_ok=True)
             (PREVIEWS / f"{d['id']}.png").write_bytes(png)
             print(f"--- draft {d['id']} (card: previews/{d['id']}.png)\n{caption}\n")
             continue
-        msg = telegram_api.send_photo(png, caption, review_buttons(as_sent))
+        msg = telegram_api.send_photo(png, caption, review_buttons(as_sent, platforms))
         d.update(status="sent", tg_message_id=msg["message_id"], sent_at=iso())
         write_json(DRAFTS, drafts)  # saved after each one, so a later failure can't make it send twice
         print(f"Sent draft {d['id']}: {d['title'][:70]}")
@@ -70,7 +76,6 @@ def send(dry_run):
 
 def poll():
     cfg = load_config()
-    hashtag = cfg["posting"].get("hashtag")
     me = str(telegram_api.chat_id())
     drafts = read_json(DRAFTS, [])
     state = read_json(STATE, {})
@@ -84,9 +89,9 @@ def poll():
         state["telegram_offset"] = update["update_id"] + 1  # asking with this offset next time confirms it
         try:
             if "callback_query" in update:
-                on_tap(update["callback_query"], by_id, me, hashtag)
+                on_tap(update["callback_query"], by_id, me, cfg)
             elif "message" in update:
-                on_message(update["message"], by_message, me, hashtag)
+                on_message(update["message"], by_message, me, cfg)
         except telegram_api.TelegramError as exc:
             print(f"Telegram error on update {update['update_id']}: {exc}")
     write_json(DRAFTS, drafts)
@@ -94,27 +99,36 @@ def poll():
     print(f"Handled {len(updates)} Telegram update{'' if len(updates) == 1 else 's'}.")
 
 
-def on_tap(tap, by_id, me, hashtag):
+def on_tap(tap, by_id, me, cfg):
     if str(tap.get("message", {}).get("chat", {}).get("id")) != me:
         return  # a button in someone else's chat
-    action, _, draft_id = (tap.get("data") or "").partition(":")
-    d = by_id.get(draft_id)
+    parts = (tap.get("data") or "").split(":")
+    action, d = parts[0], by_id.get(parts[-1])
     if not d:
         return
-    if action == "post" and d["status"] == "sent":
-        d.update(status="approved", approved_at=iso())
+    # "to:<platform>:<id>" queues the draft there; "post:<id>" is the first version's button, for Bluesky.
+    platform = parts[1] if action == "to" and len(parts) == 3 else "bluesky" if action == "post" else None
+    if platform in PLATFORMS and d["status"] in ("sent", "approved") and platform not in d.get("targets", []):
+        d.setdefault("targets", []).append(platform)
+        d.setdefault("queued_at", {})[platform] = iso()
+        settle(d)
     elif action == "skip" and d["status"] == "sent":
         d["status"] = "skipped"
-    elif action == "undo" and d["status"] in ("approved", "skipped"):
+    elif action == "undo" and d["status"] == "skipped":
         d["status"] = "sent"
-        d.pop("approved_at", None)
+    elif action == "undo" and d["status"] == "approved":
+        done = set(d.get("posted", {})) | set(d.get("failed", {}))  # what already happened stays
+        d["targets"] = [p for p in d["targets"] if p in done]
+        d["queued_at"] = {p: t for p, t in d.get("queued_at", {}).items() if p in done}
+        settle(d)
     else:
-        return  # e.g. a second tap on a draft that has already been posted
-    print(f"Draft {d['id']} is now {d['status']}")
-    refresh(d, hashtag)
+        return  # e.g. a second tap on a draft that has already gone out
+    targets = f" ({', '.join(d['targets'])})" if d.get("targets") else ""
+    print(f"Draft {d['id']} is now {d['status']}{targets}")
+    refresh(d, cfg)
 
 
-def on_message(msg, by_message, me, hashtag):
+def on_message(msg, by_message, me, cfg):
     if str(msg.get("chat", {}).get("id")) != me:
         return
     text = " ".join((msg.get("text") or "").split())
@@ -125,7 +139,7 @@ def on_message(msg, by_message, me, hashtag):
     if d["status"] not in ("sent", "approved"):
         telegram_api.send_message(f"That draft is already {d['status']}, so nothing changed.", reply_to=msg["message_id"])
         return
-    room = hook_room(d, hashtag)
+    room = hook_room(d, cfg["posting"].get("hashtag"))
     if not text or len(text) > room:
         telegram_api.send_message(
             f"A hook can be at most {room} characters, and yours is {len(text)}, so nothing changed.",
@@ -135,7 +149,7 @@ def on_message(msg, by_message, me, hashtag):
     d.setdefault("original_hook", d.get("hook"))
     d.update(hook=text, edited_at=iso())
     print(f"Draft {d['id']} has a new hook")
-    refresh(d, hashtag)
+    refresh(d, cfg)
     telegram_api.send_message("Updated the hook.", reply_to=msg["message_id"])
 
 

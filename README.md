@@ -1,6 +1,6 @@
 # Neuro Paper Bot
 
-Every weekday this bot finds new neuroscience papers on bioRxiv and in journals you choose. Gemini picks the best few and writes a short teaser (the "hook") for each, and the bot sends you the drafts on Telegram. Tap **Post** and a draft goes out on Bluesky. Tap **Skip** and it doesn't. Nothing is posted until you tap Post.
+Every weekday this bot finds new neuroscience papers on bioRxiv and in journals you choose. Gemini picks the best few and writes a short teaser (the "hook") for each, and the bot sends you the drafts on Telegram. Each draft has a button per platform: tap **🦋 Bluesky** or **💼 LinkedIn** (or both) and it goes out there. Tap **Skip** and it doesn't. Nothing is posted until you tap.
 
 Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT license).
 
@@ -9,7 +9,7 @@ Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT l
 One GitHub Actions workflow, [`run.yml`](.github/workflows/run.yml), runs every hour and does whatever is due:
 
 1. **Read your taps:** [`review.py poll`](scripts/review.py) applies the Post, Skip and Undo taps, and the replies you sent in Telegram.
-2. **Post:** [`post.py`](scripts/post.py) posts the oldest approved draft to Bluesky, if the last post went out at least 2 hours ago.
+2. **Post:** [`post.py`](scripts/post.py) posts approved drafts to the platforms you picked for them: at most one per platform per run, and at least 2 hours apart on each platform.
 3. **Make the batch:** once each weekday, after 13:00 UTC, [`batch.py`](scripts/batch.py):
    - fetches new papers ([`fetch_papers.py`](scripts/fetch_papers.py))
    - has Gemini score each one from 1 to 10 ([`rank_papers.py`](scripts/rank_papers.py))
@@ -29,7 +29,7 @@ Preprints are always labeled as preprints, so readers know they haven't been pee
 
 ## Setup
 
-You need a Telegram bot, a Bluesky account for the bot, a Gemini API key, and a GitHub repository.
+You need a Telegram bot, a Gemini API key and a GitHub repository, plus an account on each platform you post to: a Bluesky account for the bot, and your own LinkedIn profile (step 6).
 
 ### 1. Telegram bot
 
@@ -44,7 +44,7 @@ Create an account for the bot, then go to **Settings → Privacy and security �
 - `BLUESKY_USERNAME` is the bot's handle, for example `neuropaperbot.bsky.social`.
 - `BLUESKY_PASSWORD` is the app password, not the account password.
 
-Then set `posting.platforms` in `config.json` to `["bluesky"]`. Until you do, the bot still makes drafts and sends them to Telegram, but nothing is posted: drafts you approve wait in the queue.
+Then add `"bluesky"` to `posting.platforms` in `config.json`. Each platform listed there gets a button on every draft. While the list is empty, the bot still makes drafts and sends them to Telegram, but there's nothing to post them to.
 
 ### 3. Gemini API key
 
@@ -75,11 +75,24 @@ These steps change the files in `data/`. Commit them along with everything else,
 3. Push this folder.
 4. Open the **Actions** tab, choose **Run bot**, and click **Run workflow** to check that it works. After that it runs every hour on its own.
 
+### 6. LinkedIn (optional)
+
+The bot posts to LinkedIn as you, from your own profile, and only the drafts you tap **💼 LinkedIn** on.
+
+1. At [LinkedIn Developers](https://www.linkedin.com/developers/apps), create an app. LinkedIn asks you to attach it to a LinkedIn Page you manage.
+2. On the app's **Products** tab, add **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
+3. On its **Auth** tab, add the redirect URL `http://localhost:8765/callback`.
+4. Copy its Client ID and Client Secret into `.env` as `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`. They stay on your computer.
+5. Run `python scripts/linkedin_login.py`. It opens LinkedIn in your browser, saves the token in `.env`, and offers to update the `LINKEDIN_ACCESS_TOKEN` secret on GitHub for you.
+6. Add `"linkedin"` to `posting.platforms` in `config.json`, then commit and push.
+
+LinkedIn's token lasts 60 days and can't be renewed automatically, so run `linkedin_login.py` again every two months. If the token runs out first, drafts you've queued for LinkedIn wait, and their Telegram messages tell you to log in again.
+
 ## Day to day
 
 - Drafts arrive in Telegram on weekdays, soon after 13:00 UTC.
-- **✅ Post** queues a draft. Posts go out at least 2 hours apart, oldest approval first.
-- **❌ Skip** drops a draft. **↩️ Undo** takes back a Post or Skip, as long as the draft hasn't gone out.
+- **🦋 Bluesky** or **💼 LinkedIn** queues a draft for that platform; tap both to post it to both. Each platform posts at least 2 hours apart, oldest tap first.
+- **❌ Skip** drops a draft. **↩️ Undo** takes back a Skip, or whatever hasn't been posted yet.
 - **Reply to a draft** with new wording to replace its hook, for example to fix the phrasing or add an `@handle`.
 - The bot checks Telegram once an hour, so a message can take up to an hour to update.
 - Drafts you don't answer expire after 3 days.
@@ -109,7 +122,7 @@ These steps change the files in `data/`. Commit them along with everything else,
 | `schedule.batch_hour_utc` | The earliest hour (UTC) the weekday batch runs |
 | `schedule.weekdays_only` | Set to `false` to make a batch every day |
 | `schedule.draft_expire_days` | Drafts nobody answers expire after this many days |
-| `posting.platforms` | Where approved drafts go: `["bluesky"]`, plus `"x"` for X. While it's empty (`[]`), approved drafts just wait. |
+| `posting.platforms` | The platforms drafts can go to: any of `"bluesky"`, `"linkedin"` and `"x"`. Each gets a button on every draft. While it's empty (`[]`), drafts only have Skip. |
 | `posting.min_hours_between_posts` | Minimum gap between posts |
 | `posting.hashtag` | The hashtag at the end of each post, or `null` for none |
 | `posting.hook_max_chars` | The longest hook Gemini may write |
@@ -121,7 +134,7 @@ These steps change the files in `data/`. Commit them along with everything else,
 | File | What it holds |
 |---|---|
 | `drafts.json` | Every draft and its status: `ready`, then `sent`, `approved` and `posted`; or `skipped`, `expired` or `failed`. Finished drafts are removed after 14 days. |
-| `posted.json` | A record of everything posted |
+| `posted.json` | A record of everything posted, one entry per platform |
 | `seen.json` | Papers already scored, so none is considered twice. Entries are kept for 60 days. |
 | `state.json` | The date of the last batch, and how far the bot has read in Telegram |
 
@@ -129,4 +142,5 @@ These steps change the files in `data/`. Commit them along with everything else,
 
 - **Images:** every post uses the generated card. Papers' own figures aren't used, because many preprints don't allow reuse and journal figures are copyrighted.
 - **X:** add `"x"` to `posting.platforms`, and add the `X_API_KEY`, `X_API_KEY_SECRET`, `X_ACCESS_TOKEN` and `X_ACCESS_TOKEN_SECRET` secrets. X posts are text only, with the link in a reply. This hasn't been tried with real X credentials.
-- **No double posts:** before posting, `post.py` checks the bot's last 20 Bluesky posts for the same link. If an earlier run posted a draft but couldn't save that it had, the draft is recorded as posted instead of being posted again.
+- **No double posts:** before posting, `post.py` checks the bot's last 20 Bluesky posts for the same link. If an earlier run posted a draft but couldn't save that it had, the draft is recorded as posted instead of being posted again. LinkedIn doesn't let apps like this read posts back, so there's no such check there; each post is saved right after it goes out to keep the risk small.
+- **LinkedIn posts** have the same text as Bluesky's, with a link card under it (title, abstract excerpt and card image). LinkedIn requires some characters, such as parentheses, to be escaped; `linkedin_api.py` does that, so a post isn't cut short.
