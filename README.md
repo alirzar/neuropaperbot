@@ -44,7 +44,7 @@ Create an account for the bot, then go to **Settings â†’ Privacy and security â†
 - `BLUESKY_USERNAME` is the bot's handle, for example `neuropaperbot.bsky.social`.
 - `BLUESKY_PASSWORD` is the app password, not the account password.
 
-Then add `"bluesky"` to `posting.platforms` in `config.json`. Each platform listed there gets a button on every draft. While the list is empty, the bot still makes drafts and sends them to Telegram, but there's nothing to post them to.
+Then add `"bluesky"` to `posting.platforms` in `config.json`. Each platform listed there gets a button on every draft, including drafts already waiting in Telegram (the next run redraws them). While the list is empty, the bot still makes drafts and sends them to Telegram, but there's nothing to post them to.
 
 ### 3. Gemini API key
 
@@ -83,7 +83,7 @@ The bot posts to LinkedIn as you, from your own profile, and only the drafts you
 2. On the app's **Products** tab, add **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
 3. On its **Auth** tab, add the redirect URL `http://localhost:8765/callback`.
 4. Copy its Client ID and Client Secret into `.env` as `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`. They stay on your computer.
-5. Run `python scripts/linkedin_login.py`. It opens LinkedIn in your browser, saves the token in `.env`, and offers to update the `LINKEDIN_ACCESS_TOKEN` secret on GitHub for you.
+5. Run `python scripts/linkedin_login.py`. It opens LinkedIn in your browser, saves the token in `.env`, and offers to update the `LINKEDIN_ACCESS_TOKEN` secret on GitHub for you. If that part was skipped, `python scripts/linkedin_login.py --upload` does it without logging in again.
 6. Add `"linkedin"` to `posting.platforms` in `config.json`, then commit and push.
 
 LinkedIn's token lasts 60 days and can't be renewed automatically, so run `linkedin_login.py` again every two months. If the token runs out first, drafts you've queued for LinkedIn wait, and their Telegram messages tell you to log in again.

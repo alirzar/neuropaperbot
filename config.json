@@ -42,7 +42,7 @@
     "draft_expire_days": 3
   },
   "posting": {
-    "platforms": [],
+    "platforms": ["linkedin"],
     "min_hours_between_posts": 2,
     "hashtag": "#neuroscience",
     "hook_max_chars": 200

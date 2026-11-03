@@ -10,8 +10,10 @@ Then now, and again whenever the token runs out:
   python scripts/linkedin_login.py
 
 It opens LinkedIn in your browser. Once you allow access, it saves LINKEDIN_ACCESS_TOKEN in .env
-and offers to update the GitHub secret of the same name.
+and offers to update the GitHub secret of the same name. To do only that last part:
+  python scripts/linkedin_login.py --upload     copy the token in .env to GitHub, no new login
 """
+import argparse
 import html
 import http.server
 import re
@@ -114,22 +116,39 @@ def github_repo():
     return match.group(1) if match else None
 
 
-def offer_github_update(token):
+def offer_github_update(token, ask=True):
     repo = github_repo()
     if not (repo and shutil.which("gh")):
         print("Now update the LINKEDIN_ACCESS_TOKEN secret on GitHub (Settings, Secrets and variables, Actions).")
         return
-    if input(f"Update the LINKEDIN_ACCESS_TOKEN secret on GitHub ({repo}) too? [Y/n] ").strip().lower() not in ("", "y", "yes"):
-        return
+    if ask:
+        try:
+            answer = input(f"Update the LINKEDIN_ACCESS_TOKEN secret on GitHub ({repo}) too? [Y/n] ")
+        except EOFError:  # not running in an interactive terminal
+            answer = "n"
+        if answer.strip().lower() not in ("", "y", "yes"):
+            print("GitHub not updated. To do it later: python scripts/linkedin_login.py --upload")
+            return
     done = subprocess.run(["gh", "secret", "set", "LINKEDIN_ACCESS_TOKEN", "--repo", repo], input=token, text=True)
-    print("Updated the GitHub secret." if done.returncode == 0 else f"That didn't work. Try: gh secret set LINKEDIN_ACCESS_TOKEN --repo {repo}")
+    if done.returncode == 0:
+        print(f"Updated the LINKEDIN_ACCESS_TOKEN secret on GitHub ({repo}).")
+    else:
+        print(f"That didn't work. Try: gh secret set LINKEDIN_ACCESS_TOKEN --repo {repo}")
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Log in to LinkedIn and save the token the bot posts with.")
+    parser.add_argument("--upload", action="store_true", help="copy the token in .env to the GitHub secret, without logging in again")
+    if parser.parse_args().upload:
+        (token,) = require_env("LINKEDIN_ACCESS_TOKEN")
+        offer_github_update(token, ask=False)
+        return
+
     client_id, client_secret = require_env("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET")
     state = secrets.token_urlsafe(16)
     url = "https://www.linkedin.com/oauth/v2/authorization?" + urllib.parse.urlencode(
-        {"response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT, "state": state, "scope": SCOPES}
+        {"response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT, "state": state, "scope": SCOPES},
+        quote_via=urllib.parse.quote,  # spaces as %20, as in LinkedIn's examples, not +
     )
     print(f"Opening LinkedIn in your browser. If nothing opens, go to:\n{url}\n")
     webbrowser.open(url)

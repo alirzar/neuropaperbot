@@ -28,7 +28,7 @@ HELP = (
 
 
 def refresh(d, cfg):
-    """Redraw a draft's Telegram message to match its status."""
+    """Redraw a draft's Telegram message to match its status and the platforms that are on."""
     if not d.get("tg_message_id"):
         return
     platforms = enabled_platforms(cfg)
@@ -36,6 +36,7 @@ def refresh(d, cfg):
         telegram_api.edit_caption(
             d["tg_message_id"], review_caption(d, cfg["posting"].get("hashtag"), platforms), review_buttons(d, platforms)
         )
+        d["buttons_for"] = platforms
     except telegram_api.TelegramError as exc:
         print(f"Couldn't update the message for draft {d['id']}: {exc}")
 
@@ -56,6 +57,16 @@ def send(dry_run):
                 refresh(d, cfg)
                 write_json(DRAFTS, drafts)
 
+    # Drafts still waiting in Telegram get new buttons when a platform is turned on or off.
+    stale = [d for d in drafts if d["status"] in ("sent", "approved") and d.get("tg_message_id") and d.get("buttons_for") != platforms]
+    for d in stale:
+        print(f"Updating the buttons on draft {d['id']}")
+        if not dry_run:
+            refresh(d, cfg)
+            d["buttons_for"] = platforms  # one try per change, even if Telegram refused (say, a deleted message)
+    if stale and not dry_run:
+        write_json(DRAFTS, drafts)
+
     ready = [d for d in drafts if d["status"] == "ready"]
     if not ready:
         print("No new drafts to send.")
@@ -69,7 +80,7 @@ def send(dry_run):
             print(f"--- draft {d['id']} (card: previews/{d['id']}.png)\n{caption}\n")
             continue
         msg = telegram_api.send_photo(png, caption, review_buttons(as_sent, platforms))
-        d.update(status="sent", tg_message_id=msg["message_id"], sent_at=iso())
+        d.update(status="sent", tg_message_id=msg["message_id"], sent_at=iso(), buttons_for=platforms)
         write_json(DRAFTS, drafts)  # saved after each one, so a later failure can't make it send twice
         print(f"Sent draft {d['id']}: {d['title'][:70]}")
 
