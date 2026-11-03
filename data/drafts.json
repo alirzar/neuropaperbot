@@ -55,7 +55,7 @@
   },
   {
     "id": "c458318cca",
-    "status": "sent",
+    "status": "posted",
     "doi": "10.1038/s41593-026-02500-z",
     "source": "pubmed",
     "venue": "Nature Neuroscience",
@@ -78,6 +78,19 @@
     "sent_at": "2026-11-03T16:57:37+00:00",
     "buttons_for": [
       "linkedin"
-    ]
+    ],
+    "targets": [
+      "linkedin"
+    ],
+    "queued_at": {
+      "linkedin": "2026-11-03T18:14:53+00:00"
+    },
+    "posted": {
+      "linkedin": {
+        "urn": "urn:li:share:7523447634435694594",
+        "url": "https://www.linkedin.com/feed/update/urn:li:share:7523447634435694594/",
+        "posted_at": "2026-11-03T18:14:53+00:00"
+      }
+    }
   }
 ]
