@@ -42,12 +42,13 @@
     "draft_expire_days": 3
   },
   "posting": {
-    "platforms": ["bluesky"],
+    "platforms": [],
     "min_hours_between_posts": 2,
     "hashtag": "#neuroscience",
     "hook_max_chars": 200
   },
   "gemini": {
-    "model": "gemini-3.1-flash-lite"
+    "model": "gemini-3.5-flash-lite",
+    "fallback_model": "gemini-3.1-flash-lite"
   }
 }

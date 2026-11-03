@@ -89,6 +89,36 @@ def shorten(text, limit):
 
 def gemini_client():
     from google import genai  # imported here so scripts that don't use Gemini don't load it
+    from google.genai import types
 
     (key,) = require_env("GEMINI_API_KEY")
-    return genai.Client(api_key=key)
+    # Busy or rate-limited requests (HTTP 429 and 5xx) are retried with backoff, about 30 seconds in all.
+    retry = types.HttpRetryOptions(attempts=5, initial_delay=2, max_delay=16)
+    return genai.Client(api_key=key, http_options=types.HttpOptions(retry_options=retry))
+
+
+def gemini_models(cfg):
+    """The configured model, then the fallback for when it's overloaded."""
+    gemini = cfg["gemini"]
+    return [m for m in (gemini.get("model"), gemini.get("fallback_model")) if m]
+
+
+def gemini_generate(client, models, contents, config=None):
+    """Gemini's reply text, from the first of `models` that answers."""
+    error = None
+    for model in models:
+        try:
+            resp = client.models.generate_content(model=model, contents=contents, config=config)
+            if resp.text:
+                return resp.text
+            error = ValueError(f"empty reply from {model}")
+        except Exception as exc:
+            error = exc
+        print(f"  {model} didn't answer: {describe(error)}")
+    raise error or ValueError("no Gemini model set in config.json")
+
+
+def describe(exc):
+    """One line for an error. (Gemini's errors otherwise include the whole JSON response.)"""
+    code, status = getattr(exc, "code", None), getattr(exc, "status", None)
+    return f"{code} {status}" if code else str(exc)[:200]

@@ -10,12 +10,11 @@ Preview the scores for a date window without saving anything:
 """
 import argparse
 import json
-import time
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from common import gemini_client, load_config, shorten
+from common import gemini_client, gemini_generate, gemini_models, load_config, shorten
 from fetch_papers import add_window_args, fetch_papers, window_from_args
 
 PROMPT = Path(__file__).resolve().parent / "ranking_prompt.txt"
@@ -33,7 +32,7 @@ def load_prompt():
     return PROMPT.read_text(encoding="utf-8").strip()
 
 
-def score_papers(client, model, prompt, papers):
+def score_papers(client, models, prompt, papers):
     """Returns {doi (lowercase): {"score": int, "reason": str}}. Papers Gemini leaves out are missing."""
     scores = {}
     for i in range(0, len(papers), BATCH_SIZE):
@@ -43,7 +42,7 @@ def score_papers(client, model, prompt, papers):
             f"ID: {pid}\nSOURCE: {p['venue']}\nTITLE: {p['title']}\nABSTRACT: {p['abstract'][:ABSTRACT_CHARS]}"
             for pid, p in batch.items()
         )
-        for item in generate_scores(client, model, f"{prompt}\n\nPAPERS\n\n{listing}"):
+        for item in generate_scores(client, models, f"{prompt}\n\nPAPERS\n\n{listing}"):
             paper = batch.get(str(item.get("id")))
             if paper and isinstance(item.get("score"), int):
                 scores[paper["doi"].lower()] = {
@@ -56,19 +55,16 @@ def score_papers(client, model, prompt, papers):
     return scores
 
 
-def generate_scores(client, model, contents):
+def generate_scores(client, models, contents):
     config = {"response_mime_type": "application/json", "response_schema": list[Score], "temperature": 0.2}
-    for attempt in range(1, 4):
+    for _ in range(2):  # with a schema a garbled reply is rare, but worth one more try
         try:
-            resp = client.models.generate_content(model=model, contents=contents, config=config)
-            items = json.loads(resp.text)
-            if not isinstance(items, list):
-                raise ValueError("expected a JSON list")
-            return [x for x in items if isinstance(x, dict)]
-        except Exception:
-            if attempt == 3:
-                raise
-            time.sleep(5 * attempt)
+            items = json.loads(gemini_generate(client, models, contents, config))
+            if isinstance(items, list):
+                return [x for x in items if isinstance(x, dict)]
+        except ValueError:  # includes json.JSONDecodeError
+            pass
+    raise ValueError("Gemini's scores weren't a JSON list")
 
 
 def pick(papers, scores, quotas, min_score):
@@ -96,7 +92,7 @@ def main():
         print(f"ERROR {err}")
     print(f"Scoring {len(papers)} papers from {start} to {end}...")
     sel = cfg["selection"]
-    scores = score_papers(gemini_client(), cfg["gemini"]["model"], load_prompt(), papers)
+    scores = score_papers(gemini_client(), gemini_models(cfg), load_prompt(), papers)
     chosen = {p["doi"].lower() for p in pick(papers, scores, sel["daily_picks"], sel.get("min_score", 1))}
     ranked = sorted(
         (p for p in papers if p["doi"].lower() in scores), key=lambda p: scores[p["doi"].lower()]["score"], reverse=True

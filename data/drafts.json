@@ -1,1 +1,74 @@
-[]
+[
+  {
+    "id": "83239b65af",
+    "status": "sent",
+    "doi": "10.64898/2026.11.02.763564",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Myelin Governs Hippocampal Network Function through the Extracellular Space it Occupies, Not Only the Axons it Insulates",
+    "authors": [
+      "Jia",
+      "Zeng",
+      "Liu"
+    ],
+    "date": "2026-11-03",
+    "link": "https://doi.org/10.64898/2026.11.02.763564",
+    "license": "cc_by",
+    "abstract": "Myelin, the multilamellar sheath wrapping neuronal axons, enables saltatory conduction. Beyond electrical insulation, myelin occupies volume, and therefore shapes the extracellular space (ECS) through which interstitial fluid flows and neurotransmitter diffuses. How these two roles interact is unknown. We built a multi-scale model of hippocampal CA1 coupling lattice Boltzmann simulations of ECS flow to detailed networks of reconstructed neurons and glia. Demyelination enlarged the ECS volume fraction from 28 to 43 per cent up to 43 to 70 per cent across layers, lowered tortuosity from about 1.7 to 1.4, raised effective diffusivity from 0.35 to 0.50 of free solution and shortened solute breakthrough times by roughly a third, while raising flow speed yet lowering viscous dissipation. Because transmitter concentration scales inversely with that volume, synaptic driving force fell: postsynaptic potential amplitude declined with wrap count and transmission failed entirely below four of sixteen wraps. In 200-cell networks, demyelination halved firing (pyramidal 7.9 to 4.4 Hz), rendered discharge burst-dominated, reduced band power by up to 8.7-fold and displaced the population state, which a classifier separated at 100 per cent accuracy, whereas an inflammatory glial census left every functional measure unchanged. Driving myelin continuously from intact to 12.5 per cent and back recovered the same threshold near four wraps, and firing rate and spectral power returned fully to baseline. Myelin thus governs circuit function through the space it vacates as well as the axons it insulates, with opposite consequences for clearance and for signalling, a dissociation that may matter in demyelinating disease.",
+    "snippet": "Myelin, the multilamellar sheath wrapping neuronal axons, enables saltatory conduction. Beyond electrical insulation, myelin occupies volume, and therefore shapes the extracellular space (ECS) through which interstitial fluid flows and neurotransmitter diffuses. How these two roles interact is…",
+    "score": 9,
+    "reason": "Multiscale model reveals how myelin volume and extracellular space critically govern hippocampal network function.",
+    "hook": "Simulations suggest myelin shapes hippocampal network function by occupying extracellular volume, altering diffusion and flow alongside insulation.",
+    "created_at": "2026-11-03T16:56:38+00:00",
+    "tg_message_id": 6,
+    "sent_at": "2026-11-03T16:57:35+00:00"
+  },
+  {
+    "id": "2c1be5fa70",
+    "status": "sent",
+    "doi": "10.64898/2026.11.02.763631",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Sensory neurons gate a cortical plasticity window for immune encoding",
+    "authors": [
+      "Gursky",
+      "Tang",
+      "Wu"
+    ],
+    "date": "2026-11-03",
+    "link": "https://doi.org/10.64898/2026.11.02.763631",
+    "license": "cc_by_nc_nd",
+    "abstract": "Activity-dependent plasticity allows brain circuits to encode experience, but this has been established with brief stimuli. Immune responses develop over days and are represented in the insular cortex (IC). How the cortex encodes experiences with this temporal structure is unknown. Here we show that Trpv1+ sensory neurons open a multi-day cortical plasticity window matched to the immune response. Following peripheral immune challenges, Parvalbumin-expressing inhibitory interneurons are activated first, restricting plasticity. Vasoactive intestinal peptide-expressing interneurons respond two days later, disinhibiting IC excitatory neurons. Weaker challenges trigger the first phase but not the second, and preventing the transition blocks immune encoding, whereas lowering inhibition beforehand does not. These results identify a body-to-brain mechanism that gates cortical plasticity on the timescale of slowly evolving physiological experience.",
+    "snippet": "Activity-dependent plasticity allows brain circuits to encode experience, but this has been established with brief stimuli. Immune responses develop over days and are represented in the insular cortex (IC). How the cortex encodes experiences with this temporal structure is unknown. Here we show…",
+    "score": 9,
+    "reason": "Identifies a sensory-driven cortical plasticity window controlled by distinct interneurons for encoding immune experiences.",
+    "hook": "Peripheral immune challenges open a multi-day window of cortical plasticity in the insular cortex, regulated by a sequential shift in inhibitory interneuron activity.",
+    "created_at": "2026-11-03T16:56:38+00:00",
+    "tg_message_id": 7,
+    "sent_at": "2026-11-03T16:57:36+00:00"
+  },
+  {
+    "id": "c458318cca",
+    "status": "sent",
+    "doi": "10.1038/s41593-026-02500-z",
+    "source": "pubmed",
+    "venue": "Nature Neuroscience",
+    "title": "A multi-institutional investigation of psilocybin's effects on mouse behavior",
+    "authors": [
+      "Lu",
+      "White",
+      "Raymond"
+    ],
+    "date": "2026-11-02",
+    "link": "https://doi.org/10.1038/s41593-026-02500-z",
+    "license": null,
+    "abstract": "Studies reporting the effects of psychedelic drugs on mouse behavior are rapidly emerging. However, the reproducibility and reliability of these effects remain uncertain. Here we implemented a multi-institutional collaborative approach to assess which effects of psilocybin on mouse behavior are robust and replicable. Five independent laboratories performed the same experiments to test the acute and persistent effects of psilocybin (2 mg kg-1, intraperitoneally) on various behaviors. Psilocybin acutely increased anxiety- and avoidance-related behaviors and decreased fear expression in a robust and replicable manner. Surprisingly, however, psilocybin did not have replicable effects 24 h after administration in terms of reducing anxiety- and depression-like behaviors or facilitating fear extinction learning. Additionally, we did not observe psilocybin-induced alterations in social preference or social reward learning. Our characterization of psilocybin's behavioral effects, using ~200 male and female mice per experiment across five laboratories, demonstrates several robust acute effects and suggests that some of psilocybin's reported persistent effects in mice may be modest and/or inconsistent.",
+    "snippet": "Studies reporting the effects of psychedelic drugs on mouse behavior are rapidly emerging. However, the reproducibility and reliability of these effects remain uncertain. Here we implemented a multi-institutional collaborative approach to assess which effects of psilocybin on mouse behavior are…",
+    "score": 9,
+    "reason": "Multi-institutional study rigorously challenging reproducible behavioral effects of psychedelics in mice.",
+    "hook": "Multi-site replication testing shows that while psilocybin acutely alters anxiety and fear responses in mice, previously reported lasting behavioral effects lack consistency across laboratories.",
+    "created_at": "2026-11-03T16:56:38+00:00",
+    "tg_message_id": 8,
+    "sent_at": "2026-11-03T16:57:37+00:00"
+  }
+]

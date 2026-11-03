@@ -118,6 +118,9 @@ def main():
     if not approved:
         print("Nothing approved to post.")
         return
+    if not platforms:
+        print(f"{len(approved)} approved, but posting.platforms in config.json is empty, so nothing is posted.")
+        return
     gap = timedelta(hours=posting.get("min_hours_between_posts", 2))
     if posted and not args.now and now - parse_iso(posted[-1]["posted_at"]) < gap:
         print(f"{len(approved)} approved, but the last post went out less than {gap} ago; trying next run.")

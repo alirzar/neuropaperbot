@@ -17,7 +17,9 @@ from common import (
     POSTED,
     SEEN,
     STATE,
+    describe,
     gemini_client,
+    gemini_models,
     iso,
     load_config,
     now_utc,
@@ -109,17 +111,20 @@ def main():
     picks, scores = [], {}
     if new:
         sel = cfg["selection"]
-        model = cfg["gemini"]["model"]
+        models = gemini_models(cfg)
         max_chars = cfg["posting"].get("hook_max_chars", 200)
         client = gemini_client()
-        scores = score_papers(client, model, load_ranking_prompt(), new)
+        try:
+            scores = score_papers(client, models, load_ranking_prompt(), new)
+        except Exception as exc:
+            raise SystemExit(f"Gemini didn't score the papers ({describe(exc)}). Nothing was saved; the next run tries again.")
         picks = pick(new, scores, sel["daily_picks"], sel.get("min_score", 1))
         hook_prompt = load_hook_prompt(max_chars)
         for p in picks:
             try:
-                p["hook"] = make_hook(client, model, hook_prompt, p, max_chars)
+                p["hook"] = make_hook(client, models, hook_prompt, p, max_chars)
             except Exception as exc:  # the draft still goes out; you can reply in Telegram with a hook
-                print(f"ERROR writing the hook for {p['doi']}: {exc}")
+                print(f"ERROR writing the hook for {p['doi']}: {describe(exc)}")
                 errors.append(f"hook for {p['doi']}")
 
     new_drafts = [new_draft(p, scores[p["doi"].lower()], now) for p in picks]

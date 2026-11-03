@@ -44,6 +44,8 @@ Create an account for the bot, then go to **Settings â†’ Privacy and security â†
 - `BLUESKY_USERNAME` is the bot's handle, for example `neuropaperbot.bsky.social`.
 - `BLUESKY_PASSWORD` is the app password, not the account password.
 
+Then set `posting.platforms` in `config.json` to `["bluesky"]`. Until you do, the bot still makes drafts and sends them to Telegram, but nothing is posted: drafts you approve wait in the queue.
+
 ### 3. Gemini API key
 
 Create one at [Google AI Studio](https://aistudio.google.com/apikey). That's `GEMINI_API_KEY`.
@@ -107,11 +109,12 @@ These steps change the files in `data/`. Commit them along with everything else,
 | `schedule.batch_hour_utc` | The earliest hour (UTC) the weekday batch runs |
 | `schedule.weekdays_only` | Set to `false` to make a batch every day |
 | `schedule.draft_expire_days` | Drafts nobody answers expire after this many days |
-| `posting.platforms` | `["bluesky"]`. Add `"x"` to post to X too. |
+| `posting.platforms` | Where approved drafts go: `["bluesky"]`, plus `"x"` for X. While it's empty (`[]`), approved drafts just wait. |
 | `posting.min_hours_between_posts` | Minimum gap between posts |
 | `posting.hashtag` | The hashtag at the end of each post, or `null` for none |
 | `posting.hook_max_chars` | The longest hook Gemini may write |
 | `gemini.model` | The Gemini model used for scoring and hooks |
+| `gemini.fallback_model` | The model to use when the main one is overloaded |
 
 ## Files in data/
 
