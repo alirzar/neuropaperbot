@@ -1,0 +1,13 @@
+# Local secrets and settings
+.env
+.claude/settings.local.json
+
+# Python
+.venv/
+__pycache__/
+
+# Card previews from card.py and `review.py send --dry-run`
+previews/
+
+# The original OECS bot, kept next to this one for reference
+oecs-bot-main/

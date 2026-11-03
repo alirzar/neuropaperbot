@@ -1,0 +1,8 @@
+# The versions this bot was built and tested with; minor updates are allowed.
+atproto~=0.0.73
+google-genai~=2.34
+Pillow~=13.0
+pydantic~=2.14
+python-dotenv~=1.2
+requests~=2.34
+tweepy~=4.17

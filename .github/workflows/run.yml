@@ -1,0 +1,71 @@
+name: Run bot
+
+# Every hour at :17 (GitHub is busiest on the hour, and runs then often start late).
+# Each run does whatever is due: read your Telegram taps, post the next approved
+# draft, make the weekday batch, and send new drafts to Telegram. A failing step
+# doesn't stop the later ones, but it marks the run as failed so you notice.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Runs never overlap, so two runs can't post the same draft or race to commit.
+concurrency:
+  group: bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BLUESKY_USERNAME: ${{ secrets.BLUESKY_USERNAME }}
+      BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_KEY_SECRET: ${{ secrets.X_API_KEY_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - id: install
+        run: pip install -r requirements.txt
+
+      - name: Read Telegram taps and replies
+        run: python scripts/review.py poll
+
+      - name: Post the next approved draft
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python scripts/post.py
+
+      - name: Make the weekday batch, if it's due
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python scripts/batch.py
+
+      - name: Send new drafts to Telegram
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python scripts/review.py send
+
+      - name: Save state
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if ! git diff --staged --quiet; then
+            git commit -m "Update bot state [skip ci]"
+            git pull --rebase
+            git push
+          fi

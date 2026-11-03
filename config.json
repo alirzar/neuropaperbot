@@ -1,0 +1,53 @@
+{
+  "name": "Neuro Paper Bot",
+  "sources": {
+    "biorxiv": {
+      "enabled": true,
+      "category": "neuroscience"
+    },
+    "pubmed": {
+      "enabled": true,
+      "journals": {
+        "Neuron": "Neuron",
+        "Nat Neurosci": "Nature Neuroscience",
+        "J Neurosci": "Journal of Neuroscience"
+      },
+      "exclude_types": [
+        "Published Erratum",
+        "Comment",
+        "Editorial",
+        "Letter",
+        "News",
+        "Biography",
+        "Interview",
+        "Introductory Journal Article",
+        "Retraction of Publication",
+        "Retracted Publication",
+        "Expression of Concern"
+      ],
+      "email": ""
+    }
+  },
+  "selection": {
+    "lookback_days": 4,
+    "daily_picks": {
+      "biorxiv": 2,
+      "pubmed": 1
+    },
+    "min_score": 6
+  },
+  "schedule": {
+    "batch_hour_utc": 13,
+    "weekdays_only": true,
+    "draft_expire_days": 3
+  },
+  "posting": {
+    "platforms": ["bluesky"],
+    "min_hours_between_posts": 2,
+    "hashtag": "#neuroscience",
+    "hook_max_chars": 200
+  },
+  "gemini": {
+    "model": "gemini-3.1-flash-lite"
+  }
+}
