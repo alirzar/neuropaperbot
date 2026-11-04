@@ -92,5 +92,89 @@
         "posted_at": "2026-11-03T18:14:53+00:00"
       }
     }
+  },
+  {
+    "id": "74ba093351",
+    "status": "sent",
+    "doi": "10.64898/2026.11.01.763548",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Neural dynamics become significantly faster and more nonlinear at the peak of information processing",
+    "authors": [
+      "samiei",
+      "Lokray",
+      "Ahmed"
+    ],
+    "date": "2026-11-04",
+    "link": "https://doi.org/10.64898/2026.11.01.763548",
+    "license": "cc_by_nc_nd",
+    "abstract": "The temporal scale at which neural populations preserve stimulus information is often treated as fixed, even though population activity changes rapidly during sensory processing. Whether the information-optimal scale changes within a single stimulus-evoked episode, and what determines its evolution, remains unclear. We developed Integration-Split, a decoding-based framework that estimates the time-varying temporal resolution of population spike trains. Across four visual paradigms and throughout the mouse visual hierarchy, the optimal scale contracted after stimulus onset and subsequently re-expanded. This pattern persisted across stimulus temporal frequencies and was largely absent in a hippocampal control. The optimal scale varied inversely with stimulus decodability, reaching its finest resolution when stimulus identity was most accurately decoded. Beyond this association, independently estimating the signal-noise autocorrelation balance across candidate window widths identified the window that maximized the autocorrelation-based signal-to-noise ratio, and this optimal width closely followed the Integration-Split trajectory. Consistent with these findings, stronger nonlinear predictive structure coincided with finer optimal temporal resolution, consistent with the idea that shorter integration windows are needed to preserve informative nonlinear population structure that would otherwise be attenuated by temporal averaging. To test the functional relevance of this organization, we trained a Transformer solely to decode stimulus identity, without providing the optimal temporal-scale pattern or Integration-Split outputs. Its learned attention exhibited a similar contraction-and-recovery profile, and disrupting heads with stronger correspondence produced larger decoding deficits. Together, these findings reveal a dynamically changing, information-optimal temporal scale in population coding, shaped by the evolving balance of signal and noise autocorrelation and by nonlinear population structure, and independently recapitulated in the learned attention of a Transformer trained without temporal-scale supervision.",
+    "snippet": "The temporal scale at which neural populations preserve stimulus information is often treated as fixed, even though population activity changes rapidly during sensory processing. Whether the information-optimal scale changes within a single stimulus-evoked episode, and what determines its…",
+    "score": 9,
+    "reason": "Neural dynamics speed up and become nonlinear at peak sensory information processing.",
+    "hook": "Neural population timescales contract to finer resolutions during peak sensory processing, matching shifts in signal-to-noise balance and nonlinear dynamics.",
+    "created_at": "2026-11-04T18:41:56+00:00",
+    "tg_message_id": 29,
+    "sent_at": "2026-11-04T18:44:28+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 30
+  },
+  {
+    "id": "8f3abbb9ef",
+    "status": "sent",
+    "doi": "10.64898/2026.11.02.763697",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Mapping AMPA and NMDA receptors at mouse brain hippocampal synapses by cryo-ET",
+    "authors": [
+      "Spangler",
+      "Matsui",
+      "Kim"
+    ],
+    "date": "2026-11-03",
+    "link": "https://doi.org/10.64898/2026.11.02.763697",
+    "license": "cc_by",
+    "abstract": "AMPA and NMDA receptors are fundamental to synaptic transmission through the detection of released neurotransmitter. These ion channels open in response to glutamate binding, resulting in depolarization of the postsynaptic membrane and influx of calcium. Receptor localization plays a key role in synaptic strength, and changes in receptor number and location underpin synaptic plasticity, learning and memory. Here we apply receptor subunit-specific antibody fragments and multiplexed gold nanoparticle conjugates, together with cryo-electron tomography (cryo-ET), to elucidate the in-situ molecular organization of AMPA and NMDA receptors at hippocampal synapses in adult mouse brain tissue. AMPA receptors are predominantly found in densely packed liquid-like clusters, with interspersed NMDA receptors and adjacent NMDA receptor clusters. By direct localization of individual receptors, we provide molecular-resolution insight into the distribution of AMPA and NMDA receptors across the synapse, at peri and extrasynaptic sites, and within endocytosed vesicles. Visualization of multiple presynaptic vesicle fusion events suggests that receptors are near, but not always directly adjacent to, transmitter release sites. By mapping AMPA and NMDA receptors, and glutamate release sites, we provide receptor-resolution insight into the structure and function of brain hippocampal synapses.",
+    "snippet": "AMPA and NMDA receptors are fundamental to synaptic transmission through the detection of released neurotransmitter. These ion channels open in response to glutamate binding, resulting in depolarization of the postsynaptic membrane and influx of calcium. Receptor localization plays a key role in…",
+    "score": 9,
+    "reason": "Maps in situ molecular organization of AMPA and NMDA receptors at hippocampal synapses using cryo-ET.",
+    "hook": "AMPA receptors form densely packed clusters with interspersed NMDA receptors at mouse hippocampal synapses, according to a cryo-electron tomography preprint.",
+    "created_at": "2026-11-04T18:41:56+00:00",
+    "tg_message_id": 31,
+    "sent_at": "2026-11-04T18:44:30+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 32
+  },
+  {
+    "id": "bcfeb5d716",
+    "status": "sent",
+    "doi": "10.1016/j.neuron.2026.09.028",
+    "source": "pubmed",
+    "venue": "Neuron",
+    "title": "Hypothalamus-driven brain health through metabolic flexibility",
+    "authors": [
+      "Horvath",
+      "Romanov",
+      "Matarese"
+    ],
+    "date": "2026-11-03",
+    "link": "https://doi.org/10.1016/j.neuron.2026.09.028",
+    "license": null,
+    "abstract": "Organismal physiology depends on continuous, non-hierarchical communication among cells, tissues, and organs. We argue that this communication rests on metabolic flexibility-the capacity of cells and tissues to adapt substrate use to changing energetic demands-and that the hypothalamus serves as the central hub coordinating this flexibility across the body. Using hypothalamic agouti-related protein (AgRP) and pro-opiomelanocortin (POMC) neurons as a model, we show these melanocortin neurons do more than regulate hunger and satiety: by integrating metabolic, hormonal, and immune signals, they shape reward, learning, executive function, and social behavior, while imposing coordinated metabolic states on peripheral tissues. When this flexibility is lost, as with aging or overnutrition, body-brain communication becomes rigid, driving cognitive decline, chronic inflammation, and neurodegenerative disease. We propose that signals from the body are not peripheral modifiers of brain function but fundamental determinants of it, with direct implications for hypothalamus-centered strategies to preserve brain health across the lifespan.",
+    "snippet": "Organismal physiology depends on continuous, non-hierarchical communication among cells, tissues, and organs. We argue that this communication rests on metabolic flexibility-the capacity of cells and tissues to adapt substrate use to changing energetic demands-and that the hypothalamus serves as…",
+    "score": 9,
+    "reason": "Proposes the hypothalamus coordinates whole-body metabolic flexibility to preserve brain health.",
+    "hook": "Hypothalamic melanocortin neurons coordinate whole-body metabolism and shape cognition. Losing this metabolic flexibility impairs body-brain communication, potentially driving neurodegeneration.",
+    "created_at": "2026-11-04T18:41:56+00:00",
+    "tg_message_id": 33,
+    "sent_at": "2026-11-04T18:44:31+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 34
   }
 ]
