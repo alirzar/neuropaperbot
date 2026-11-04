@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,6 +78,36 @@ def title_key(title):
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
 
 
+def fold(text):
+    """Lowercase without accents, so 'Güth' and 'Guth' match."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
+
+
+PARTICLES = {"van", "von", "de", "der", "den", "da", "di", "del", "della", "du", "dos", "das", "la", "le", "ter", "ten"}
+
+
+def author_key(last, first=""):
+    """'smith j': last name and first initial, lowercase and without accents, for author alerts."""
+    return " ".join(x for x in (fold(last).strip(), fold(first).strip(" .")[:1]) if x)
+
+
+def name_key(name):
+    """author_key for a name written any common way: 'Jane A. Smith', 'Smith, Jane', 'Smith JA', 'Maria van Haren'."""
+    name = " ".join((name or "").replace(".", ". ").split())
+    if "," in name:
+        last, first = name.split(",", 1)
+        return author_key(last, first)
+    parts = name.split()
+    if len(parts) < 2:
+        return author_key(name)
+    if parts[-1].isupper() and len(parts[-1]) <= 3:  # PubMed style: "Smith JA"
+        return author_key(" ".join(parts[:-1]), parts[-1])
+    i = len(parts) - 1
+    while i > 1 and parts[i - 1].lower() in PARTICLES:
+        i -= 1
+    return author_key(" ".join(parts[i:]), parts[0])
+
+
 def shorten(text, limit):
     """Cut text to at most `limit` characters at a word boundary, ending in an ellipsis."""
     if len(text) <= limit:
@@ -92,8 +123,12 @@ def gemini_client():
     from google.genai import types
 
     (key,) = require_env("GEMINI_API_KEY")
-    # Busy or rate-limited requests (HTTP 429 and 5xx) are retried with backoff, about 30 seconds in all.
-    retry = types.HttpRetryOptions(attempts=5, initial_delay=2, max_delay=16)
+    # Busy servers (5xx) and timeouts are retried with backoff, about 30 seconds in all. Rate limits
+    # (429) aren't: text requests switch to the fallback model, and embeddings wait as long as
+    # Gemini asks (see vectors.py), which is longer than these retries would.
+    retry = types.HttpRetryOptions(
+        attempts=5, initial_delay=2, max_delay=16, http_status_codes=[408, 500, 502, 503, 504]
+    )
     return genai.Client(api_key=key, http_options=types.HttpOptions(retry_options=retry))
 
 

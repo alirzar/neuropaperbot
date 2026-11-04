@@ -30,6 +30,75 @@ def call(method, files=None, **params):
     return body["result"]
 
 
+# ---------- for the public bot, which talks to many chats ----------
+def keyboard(rows):
+    return {"inline_keyboard": rows} if rows else None
+
+
+def send(chat, text, buttons=None, reply_to=None):
+    """An HTML message to any chat, without link previews."""
+    return call(
+        "sendMessage",
+        chat_id=chat,
+        text=text,
+        parse_mode="HTML",
+        link_preview_options={"is_disabled": True},
+        reply_markup=keyboard(buttons),
+        reply_parameters={"message_id": reply_to, "allow_sending_without_reply": True} if reply_to else None,
+    )
+
+
+def photo(chat, png, caption, buttons=None):
+    return call(
+        "sendPhoto",
+        files={"photo": ("card.png", png, "image/png")},
+        chat_id=chat,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=keyboard(buttons),
+    )
+
+
+def edit(chat, message_id, text, buttons=None):
+    """Replace a text message's text, and its buttons (none if not given)."""
+    try:
+        call(
+            "editMessageText",
+            chat_id=chat,
+            message_id=message_id,
+            text=text,
+            parse_mode="HTML",
+            link_preview_options={"is_disabled": True},
+            reply_markup={"inline_keyboard": buttons or []},
+        )
+    except TelegramError as exc:
+        if "message is not modified" not in str(exc):
+            raise
+
+
+def edit_markup(chat, message_id, buttons):
+    try:
+        call("editMessageReplyMarkup", chat_id=chat, message_id=message_id, reply_markup={"inline_keyboard": buttons or []})
+    except TelegramError as exc:
+        if "message is not modified" not in str(exc):
+            raise
+
+
+def answer(callback_id, text=None):
+    """Stop a tapped button's spinner, optionally with a short note."""
+    try:
+        call("answerCallbackQuery", callback_query_id=callback_id, text=text)
+    except TelegramError:
+        pass  # taps can't be answered once they're a few minutes old; nothing to do about that
+
+
+def typing(chat):
+    try:
+        call("sendChatAction", chat_id=chat, action="typing")
+    except TelegramError:
+        pass
+
+
 def chat_id():
     cid = os.getenv("TELEGRAM_CHAT_ID")
     if not cid:
@@ -37,11 +106,12 @@ def chat_id():
     return cid
 
 
-def send_photo(png, caption, buttons):
+def send_photo(png, caption, buttons=None, chat=None):
+    """Send a card with an HTML caption to your chat, or to `chat` (such as a channel's @username)."""
     return call(
         "sendPhoto",
         files={"photo": ("card.png", png, "image/png")},
-        chat_id=chat_id(),
+        chat_id=chat or chat_id(),
         caption=caption,
         parse_mode="HTML",
         reply_markup=buttons,
@@ -63,6 +133,23 @@ def edit_caption(message_id, caption, buttons):
             raise
 
 
-def send_message(text, reply_to=None):
+def send_message(text, reply_to=None, html=False):
     reply = {"message_id": reply_to, "allow_sending_without_reply": True} if reply_to else None
-    return call("sendMessage", chat_id=chat_id(), text=text, reply_parameters=reply)
+    formatting = {"parse_mode": "HTML", "link_preview_options": {"is_disabled": True}} if html else {}
+    return call("sendMessage", chat_id=chat_id(), text=text, reply_parameters=reply, **formatting)
+
+
+def edit_text(message_id, text):
+    """Replace the text of an HTML message sent with send_message(html=True)."""
+    try:
+        call(
+            "editMessageText",
+            chat_id=chat_id(),
+            message_id=message_id,
+            text=text,
+            parse_mode="HTML",
+            link_preview_options={"is_disabled": True},
+        )
+    except TelegramError as exc:
+        if "message is not modified" not in str(exc):
+            raise

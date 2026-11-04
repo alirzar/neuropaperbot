@@ -6,9 +6,10 @@
   python scripts/review.py chat-id          show the chat ID of whoever messaged the bot (for setup)
 
 Each draft has a button for every platform in posting.platforms: tap one or more to queue the
-draft there. Skip drops it, and Undo takes back whatever hasn't been posted yet. Telegram holds
-taps and messages for 24 hours until the bot asks for them, so the hourly poll doesn't miss any.
-Only the chat in TELEGRAM_CHAT_ID can act on drafts.
+draft there. Skip drops it, and Undo takes back whatever hasn't been posted yet. A second message
+under each draft has the post ready to copy, for posting it anywhere by hand. Telegram holds taps
+and messages for 24 hours until the bot asks for them, so the hourly poll doesn't miss any. Only
+the chat in TELEGRAM_CHAT_ID can act on drafts.
 
 Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 """
@@ -18,12 +19,12 @@ from datetime import timedelta
 import telegram_api
 from card import PREVIEWS, make_card
 from common import DRAFTS, STATE, iso, load_config, now_utc, parse_iso, read_json, write_json
-from compose import PLATFORMS, enabled_platforms, hook_room, review_buttons, review_caption, settle
+from compose import PLATFORMS, copy_message, enabled_platforms, hook_room, review_buttons, review_caption, settle
 
 HELP = (
-    "Every weekday I send you a few drafts here. Tap a platform's button under a draft to post it there "
-    "(you can tap more than one), or ❌ Skip. Reply to a draft with new wording to replace its hook. "
-    "I check for taps once an hour."
+    "Every weekday I send you a few drafts here, each with a version ready to copy. Tap a button under a "
+    "draft to post it there (you can tap more than one), or ❌ Skip. Reply to a draft with new wording to "
+    "replace its hook. I check for taps once an hour."
 )
 
 
@@ -77,11 +78,17 @@ def send(dry_run):
         if dry_run:
             PREVIEWS.mkdir(exist_ok=True)
             (PREVIEWS / f"{d['id']}.png").write_bytes(png)
-            print(f"--- draft {d['id']} (card: previews/{d['id']}.png)\n{caption}\n")
+            print(f"--- draft {d['id']} (card: previews/{d['id']}.png)\n{caption}\n\n{copy_message(d, hashtag)}\n")
             continue
         msg = telegram_api.send_photo(png, caption, review_buttons(as_sent, platforms))
         d.update(status="sent", tg_message_id=msg["message_id"], sent_at=iso(), buttons_for=platforms)
         write_json(DRAFTS, drafts)  # saved after each one, so a later failure can't make it send twice
+        try:
+            copy = telegram_api.send_message(copy_message(d, hashtag), reply_to=msg["message_id"], html=True)
+            d["tg_copy_message_id"] = copy["message_id"]
+            write_json(DRAFTS, drafts)
+        except telegram_api.TelegramError as exc:
+            print(f"Couldn't send the ready-to-copy text for draft {d['id']}: {exc}")
         print(f"Sent draft {d['id']}: {d['title'][:70]}")
 
 
@@ -91,7 +98,7 @@ def poll():
     drafts = read_json(DRAFTS, [])
     state = read_json(STATE, {})
     by_id = {d["id"]: d for d in drafts}
-    by_message = {d["tg_message_id"]: d for d in drafts if d.get("tg_message_id")}
+    by_message = {d[key]: d for d in drafts for key in ("tg_message_id", "tg_copy_message_id") if d.get(key)}
 
     updates = telegram_api.call(
         "getUpdates", offset=state.get("telegram_offset", 0), timeout=0, allowed_updates=["callback_query", "message"]
@@ -161,6 +168,11 @@ def on_message(msg, by_message, me, cfg):
     d.update(hook=text, edited_at=iso())
     print(f"Draft {d['id']} has a new hook")
     refresh(d, cfg)
+    if d.get("tg_copy_message_id"):
+        try:
+            telegram_api.edit_text(d["tg_copy_message_id"], copy_message(d, cfg["posting"].get("hashtag")))
+        except telegram_api.TelegramError as exc:
+            print(f"Couldn't update the ready-to-copy text for draft {d['id']}: {exc}")
     telegram_api.send_message("Updated the hook.", reply_to=msg["message_id"])
 
 

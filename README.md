@@ -1,10 +1,106 @@
 # Neuro Paper Bot
 
-Every weekday this bot finds new neuroscience papers on bioRxiv and in journals you choose. Gemini picks the best few and writes a short teaser (the "hook") for each, and the bot sends you the drafts on Telegram. Each draft has a button per platform: tap **🦋 Bluesky** or **💼 LinkedIn** (or both) and it goes out there. Tap **Skip** and it doesn't. Nothing is posted until you tap.
+Finds new neuroscience papers on bioRxiv and in journals you choose, and uses Gemini to pick and explain them. There are two versions:
+
+- **[The public bot](#the-public-bot):** a Telegram bot other people can join. Each person gets a daily digest matched to their interests, and can search recent papers, save them, follow authors and ask for plain-language summaries. It runs on a computer that stays on, such as a lab server.
+- **[The GitHub version](#the-github-version):** runs hourly on GitHub Actions and sends only you a few drafts each weekday, to post to a channel, LinkedIn or Bluesky. The public bot replaces it.
 
 Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT license).
 
-## How it works
+## The public bot
+
+[`scripts/bot.py`](scripts/bot.py) keeps running and talks to everyone who uses it:
+
+- **Joining:** someone sends `/start`, and you get **✅ Approve / ❌ Deny**. Once approved, they pick from 12 areas, describe their interests in their own words, and choose a time zone and an hour.
+- **A daily digest** at their hour: the new papers that suit them best, each as a card with **👍 / 👎** (which tune later picks), **💾 Save**, **📄 Summary** and **📋 Copy**. Your own digest also has **💼 LinkedIn**.
+- **On request:** `/find <topic>` searches the last 60 days of papers. Pasting a DOI or a bioRxiv link gets a plain-language summary. `/follow <name>` sends a message when that author publishes, in any PubMed journal or on bioRxiv.
+- **Commands:** `/digest`, `/find`, `/saved`, `/follow`, `/following`, `/unfollow`, `/topics`, `/keywords`, `/time`, `/settings`, `/privacy` and `/stop`; and for you, `/users`.
+
+**How it picks papers.** Every morning at 06:00 UTC it fetches new papers, as the GitHub version does. Gemini turns each paper, and each person's topics and keywords, into a "fingerprint" (an embedding), so that similar subjects get similar fingerprints. A person's papers are the week's new ones closest to any of their interests, nudged toward papers like the ones they gave 👍, away from the 👎 ones, and slightly by Gemini's quality score. Gemini works per paper, not per person, so costs grow with the number of papers rather than people. Summaries are the exception, which is why each person gets 10 a day (you have no limit).
+
+**Privacy.** People's data stays in `data/db/bot.db` on the computer running the bot and is never committed to git: their Telegram name and ID, their interests, what they were sent, and their 👍/👎, saves and follows. `/privacy` tells people this, and `/stop` deletes everything about them.
+
+### Try it on your computer
+
+1. In Telegram, ask **@BotFather** for a new bot (`/newbot`). Don't reuse the GitHub version's bot: two programs can't read the same bot's messages.
+2. In `.env`, set `TELEGRAM_BOT_TOKEN` to the new bot's token. `TELEGRAM_CHAT_ID` stays your own ID, which makes you the admin. `GEMINI_API_KEY` is needed too, and `LINKEDIN_ACCESS_TOKEN` is optional.
+3. Run `python scripts/bot.py`, and send your new bot `/start` to set up your own digest. Its first paper update starts right away and takes a minute or two. Stop the bot with **Ctrl+C**.
+4. Optional, with @BotFather: `/setuserpic` (use `assets/logo.png`), `/setdescription`, `/setjoingroups` → **Disable**, and `/setcommands` with the list below, so the commands show up in Telegram's menu.
+
+```
+digest - Today's papers, now
+find - Search recent papers
+saved - Papers you saved
+follow - Get a message when an author publishes
+following - Authors you follow
+unfollow - Stop following an author
+topics - The areas you follow
+keywords - Your interests in your own words
+time - When your digest arrives
+settings - Papers per digest
+privacy - What the bot keeps
+stop - Delete your data
+help - What the bot can do
+```
+
+### Run it on a server
+
+Any Linux machine that stays on, has Python 3.11 or newer, and can reach the internet will do. It doesn't need open ports or a web address, because the bot fetches its messages from Telegram.
+
+```
+git clone https://github.com/alirzar/neuropaperbot.git
+cd neuropaperbot
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+nano .env                          # the same lines as your computer's .env
+.venv/bin/python scripts/bot.py    # check that it starts, then Ctrl+C
+```
+
+To keep it running, and restart it after a crash or a reboot, make it a systemd service. Save this as `/etc/systemd/system/neuropaperbot.service`, with your own username and folder:
+
+```
+[Unit]
+Description=Neuro Paper Bot
+After=network-online.target
+
+[Service]
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/neuropaperbot
+ExecStart=/home/YOUR_USERNAME/neuropaperbot/.venv/bin/python scripts/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Start it with `sudo systemctl enable --now neuropaperbot`, and follow its log with `journalctl -u neuropaperbot -f`. If you don't have admin rights on the server, ask whoever runs it to set this up, or run the bot inside `tmux` for now.
+
+Back up `data/db/bot.db` now and then: it's the only copy of everyone's settings.
+
+Once the bot runs on the server, turn off the GitHub version: on GitHub, open **Actions → Run bot → ⋯ → Disable workflow**.
+
+### The public bot's settings
+
+In `config.json`:
+
+| Key | What it does |
+|---|---|
+| `bot.approval` | `true`: you approve each new person. `false`: anyone can join. |
+| `bot.update_hour_utc` | When (UTC) the daily paper update runs |
+| `bot.papers_per_digest` | Papers per digest, until someone picks their own with `/settings` |
+| `bot.recent_days` | How old a paper can be and still go in a digest |
+| `bot.search_days`, `bot.keep_days` | How far back `/find` looks, and when old papers are forgotten (saved ones are kept) |
+| `bot.summaries_per_day`, `bot.searches_per_day` | Daily limits per person; you have none |
+| `bot.follows_per_person` | The most authors one person can follow |
+| `topics` | The areas offered at setup: each has a label, and the description its fingerprint is made from |
+| `gemini.embedding_model` | The Gemini model that makes the fingerprints |
+
+## The GitHub version
+
+Every weekday the GitHub version finds new papers, has Gemini pick the best few and write a short teaser (the "hook") for each, and sends you the drafts on Telegram. Each draft has a button per platform: tap **📢 Channel** (your public Telegram channel), **💼 LinkedIn** or **🦋 Bluesky**, or several, and it goes out there. Tap **Skip** and it doesn't. Nothing is posted until you tap. Under each draft is also a version ready to copy, for posting it anywhere else yourself.
+
+### How it works
 
 One GitHub Actions workflow, [`run.yml`](.github/workflows/run.yml), runs every hour and does whatever is due:
 
@@ -15,7 +111,7 @@ One GitHub Actions workflow, [`run.yml`](.github/workflows/run.yml), runs every 
    - has Gemini score each one from 1 to 10 ([`rank_papers.py`](scripts/rank_papers.py))
    - picks the best 2 preprints and 1 journal paper
    - has Gemini write a hook for each pick ([`generate_summaries.py`](scripts/generate_summaries.py))
-4. **Send the drafts:** [`review.py send`](scripts/review.py) sends each new draft to Telegram, with its card image and the buttons.
+4. **Send the drafts:** [`review.py send`](scripts/review.py) sends each new draft to Telegram, with its card image and the buttons, followed by the post ready to copy.
 5. **Save:** the workflow commits `data/` back to the repo. The repo is the bot's memory.
 
 A post looks like this. The paper's title, link and card image go in the link card under the text:
@@ -27,7 +123,7 @@ A post looks like this. The paper's title, link and card image go in the link ca
 
 Preprints are always labeled as preprints, so readers know they haven't been peer reviewed yet.
 
-## Setup
+## Setting up the GitHub version
 
 You need a Telegram bot, a Gemini API key and a GitHub repository, plus an account on each platform you post to: a Bluesky account for the bot, and your own LinkedIn profile (step 6).
 
@@ -88,10 +184,19 @@ The bot posts to LinkedIn as you, from your own profile, and only the drafts you
 
 LinkedIn's token lasts 60 days and can't be renewed automatically, so run `linkedin_login.py` again every two months. If the token runs out first, drafts you've queued for LinkedIn wait, and their Telegram messages tell you to log in again.
 
-## Day to day
+### 7. Public Telegram channel (optional)
+
+A channel anyone can join, where the bot posts the papers you pick: the card, the hook, the title, authors and journal, and the link.
+
+1. In Telegram, create a channel (**New Channel**), make it **public**, and choose its link, for example `t.me/NeuroPaperDaily`.
+2. In the channel's settings, open **Administrators**, add your bot, and let it **post messages**.
+3. In `config.json`, set `posting.telegram_channel` to the channel's username, such as `"@NeuroPaperDaily"`, and add `"channel"` to `posting.platforms`. Then commit and push.
+
+## Day to day with the GitHub version
 
 - Drafts arrive in Telegram on weekdays, soon after 13:00 UTC.
-- **🦋 Bluesky** or **💼 LinkedIn** queues a draft for that platform; tap both to post it to both. Each platform posts at least 2 hours apart, oldest tap first.
+- **📢 Channel**, **💼 LinkedIn** or **🦋 Bluesky** queues a draft for that platform; tap more than one to post it to each. Each platform posts at least 2 hours apart, oldest tap first.
+- **📋 Ready to copy**, under each draft, has a short version for X and Bluesky and a longer one for anywhere else, link included. Tap a block to copy it.
 - **❌ Skip** drops a draft. **↩️ Undo** takes back a Skip, or whatever hasn't been posted yet.
 - **Reply to a draft** with new wording to replace its hook, for example to fix the phrasing or add an `@handle`.
 - The bot checks Telegram once an hour, so a message can take up to an hour to update.
@@ -122,7 +227,8 @@ LinkedIn's token lasts 60 days and can't be renewed automatically, so run `linke
 | `schedule.batch_hour_utc` | The earliest hour (UTC) the weekday batch runs |
 | `schedule.weekdays_only` | Set to `false` to make a batch every day |
 | `schedule.draft_expire_days` | Drafts nobody answers expire after this many days |
-| `posting.platforms` | The platforms drafts can go to: any of `"bluesky"`, `"linkedin"` and `"x"`. Each gets a button on every draft. While it's empty (`[]`), drafts only have Skip. |
+| `posting.platforms` | The platforms drafts can go to: any of `"channel"`, `"linkedin"`, `"bluesky"` and `"x"`. Each gets a button on every draft. While it's empty (`[]`), drafts only have Skip. |
+| `posting.telegram_channel` | Your public channel's username, such as `"@NeuroPaperDaily"` (step 7) |
 | `posting.min_hours_between_posts` | Minimum gap between posts |
 | `posting.hashtag` | The hashtag at the end of each post, or `null` for none |
 | `posting.hook_max_chars` | The longest hook Gemini may write |

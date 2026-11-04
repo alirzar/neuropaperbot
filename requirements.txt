@@ -1,8 +1,10 @@
 # The versions this bot was built and tested with; minor updates are allowed.
 atproto~=0.0.73
 google-genai~=2.34
+numpy~=2.4
 Pillow~=13.0
 pydantic~=2.14
 python-dotenv~=1.2
 requests~=2.34
 tweepy~=4.17
+tzdata>=2026.1  # time zones for Python on Windows; Linux has its own

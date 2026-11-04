@@ -43,12 +43,39 @@
   },
   "posting": {
     "platforms": ["linkedin"],
+    "telegram_channel": "",
     "min_hours_between_posts": 2,
     "hashtag": "#neuroscience",
     "hook_max_chars": 200
   },
   "gemini": {
     "model": "gemini-3.5-flash-lite",
-    "fallback_model": "gemini-3.1-flash-lite"
+    "fallback_model": "gemini-3.1-flash-lite",
+    "embedding_model": "gemini-embedding-2"
+  },
+  "bot": {
+    "approval": true,
+    "update_hour_utc": 6,
+    "papers_per_digest": 3,
+    "recent_days": 7,
+    "search_days": 60,
+    "keep_days": 60,
+    "summaries_per_day": 10,
+    "searches_per_day": 30,
+    "follows_per_person": 20
+  },
+  "topics": {
+    "memory": ["Learning & memory", "learning and memory, hippocampus, synaptic plasticity, memory consolidation and replay"],
+    "systems": ["Circuits & systems", "neural circuits, population dynamics, electrophysiology, systems neuroscience"],
+    "cognition": ["Cognition & behavior", "attention, decision-making, perception, cognitive neuroscience and behavior"],
+    "computational": ["Computational & AI", "computational neuroscience, models and theory of the brain, neural networks and machine learning"],
+    "sensory": ["Sensory systems", "vision, hearing, touch, smell and taste, sensory processing"],
+    "motor": ["Motor control", "movement, motor cortex, basal ganglia, cerebellum, motor learning"],
+    "molecular": ["Molecular & cellular", "synapses, ion channels, receptors, gene expression, neurons and glia at the cellular level"],
+    "development": ["Development", "brain development, neurogenesis, axon guidance, critical periods"],
+    "affect": ["Reward, emotion & stress", "dopamine, serotonin and neuromodulators, reward, emotion, stress, social behavior"],
+    "disorders": ["Brain disorders", "neurodegeneration, Alzheimer's and Parkinson's disease, epilepsy, psychiatric disorders"],
+    "imaging": ["Human brain imaging", "fMRI, EEG, MEG, human neuroimaging, brain connectivity"],
+    "methods": ["Methods & tools", "new techniques: imaging methods, optogenetics, recording technology, datasets and software"]
   }
 }

@@ -14,8 +14,8 @@ X_LIMIT = 280
 LINKEDIN_LIMIT = 3000
 CAPTION_LIMIT = 1000  # Telegram allows 1024 characters in a photo caption; keep some slack
 
-PLATFORMS = {"bluesky": "Bluesky", "linkedin": "LinkedIn", "x": "X"}
-BUTTONS = {"bluesky": "🦋 Bluesky", "linkedin": "💼 LinkedIn", "x": "𝕏 X"}
+PLATFORMS = {"channel": "Channel", "bluesky": "Bluesky", "linkedin": "LinkedIn", "x": "X"}
+BUTTONS = {"channel": "📢 Channel", "bluesky": "🦋 Bluesky", "linkedin": "💼 LinkedIn", "x": "𝕏 X"}
 
 
 def enabled_platforms(cfg):
@@ -51,6 +51,53 @@ def post_text(d, hashtag, limit=BLUESKY_LIMIT):
     """The hook, then who and where. The title and link go in the post's link card."""
     hook = (d.get("hook") or "").strip() or d["title"]
     return shorten(hook, hook_room(d, hashtag, limit)) + tail(d, hashtag)
+
+
+def copy_versions(d, hashtag):
+    """Posts to paste by hand, link included: one short enough for X and Bluesky, a longer one for anywhere else."""
+    hook = (d.get("hook") or "").strip() or d["title"]
+    short_tail = f"\n\n{attribution(d)}\n{d['link']}" + (f"\n{hashtag}" if hashtag else "")
+    short = shorten(hook, X_LIMIT - len(short_tail)) + short_tail
+    long = f"{hook}\n\n📄 {d['title']}\n{attribution(d)}\n{d['link']}" + (f"\n\n{hashtag}" if hashtag else "")
+    return short, long
+
+
+def copy_message(d, hashtag):
+    """Telegram message (HTML) with both versions in code blocks, which Telegram copies with a tap."""
+
+    def e(text):
+        return html.escape(text, quote=False)
+
+    short, long = copy_versions(d, hashtag)
+    return (
+        "📋 <b>Ready to copy</b>\n\n"
+        f"<b>X and Bluesky</b>\n<pre>{e(short)}</pre>\n\n"
+        f"<b>LinkedIn and others</b>\n<pre>{e(long)}</pre>"
+    )
+
+
+def channel_post(d, hashtag):
+    """Caption (HTML) for the public channel: the hook, then the paper."""
+
+    def e(text):
+        return html.escape(text, quote=False)
+
+    hook = shorten((d.get("hook") or "").strip(), 400)
+    parts = [e(hook)] if hook else []
+    parts.append(f"<b>{e(d['title'])}</b>\n{e(attribution(d))}\n{e(d['link'])}")
+    if hashtag:
+        parts.append(e(hashtag))
+    return "\n\n".join(parts)
+
+
+def channel_link(channel, message_id):
+    """Link to a channel post, for a channel given as @name (public) or as its -100… ID (private)."""
+    channel = str(channel)
+    if channel.startswith("@"):
+        return f"https://t.me/{channel[1:]}/{message_id}"
+    if channel.startswith("-100"):
+        return f"https://t.me/c/{channel[4:]}/{message_id}"
+    return None
 
 
 def pending(d):

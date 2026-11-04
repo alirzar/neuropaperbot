@@ -5,7 +5,8 @@ Both are free public APIs:
   PubMed   NCBI E-utilities: the journals in config.json, by the date added to PubMed
 
 Every paper comes back in one shape:
-  {doi, source, venue, title, authors (last names), date, link, abstract, license}
+  {doi, source, venue, title, authors (last names), author_keys ('smith j', for author alerts),
+   date, link, abstract, license}
 
 Run it on its own to see what a batch would find (saves nothing):
   python scripts/fetch_papers.py
@@ -20,7 +21,7 @@ from datetime import date, timedelta
 
 import requests
 
-from common import clean_text, load_config, now_utc, shorten
+from common import author_key, clean_text, load_config, name_key, now_utc, shorten
 
 BIORXIV = "https://api.biorxiv.org/details/biorxiv/{start}/{end}/{cursor}"
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -45,22 +46,25 @@ def fetch_biorxiv(start, end, category):
         total = int(msg.get("total") or 0)
         cursor += len(page)  # the API returns 30 records per page
         for p in page:
-            if str(p.get("version")) != "1":
-                continue  # a revision of an older preprint
-            papers.append(
-                {
-                    "doi": p["doi"],
-                    "source": "biorxiv",
-                    "venue": "bioRxiv preprint",
-                    "title": clean_text(p.get("title")),
-                    "authors": biorxiv_authors(p.get("authors")),
-                    "date": p.get("date"),
-                    "link": f"https://doi.org/{p['doi']}",
-                    "abstract": clean_text(p.get("abstract")),
-                    "license": p.get("license"),
-                }
-            )
+            if str(p.get("version")) == "1":  # later versions are revisions of older preprints
+                papers.append(biorxiv_record(p))
     return papers
+
+
+def biorxiv_record(p):
+    """One record from the bioRxiv API, in the shape every paper has."""
+    return {
+        "doi": p["doi"],
+        "source": "biorxiv",
+        "venue": "bioRxiv preprint",
+        "title": clean_text(p.get("title")),
+        "authors": biorxiv_authors(p.get("authors")),
+        "author_keys": [name_key(part) for part in (p.get("authors") or "").split(";") if part.strip()],
+        "date": p.get("date"),
+        "link": f"https://doi.org/{p['doi']}",
+        "abstract": clean_text(p.get("abstract")),
+        "license": p.get("license"),
+    }
 
 
 def biorxiv_authors(field):
@@ -71,13 +75,17 @@ def biorxiv_authors(field):
 
 def fetch_pubmed(start, end, journals, exclude_types, email=None, api_key=None):
     """journals maps PubMed's journal abbreviation (its [ta] search field) to the name shown in posts."""
+    query = " OR ".join(f'"{abbr}"[ta]' for abbr in journals)
+    return search_pubmed(f"({query}) AND {start:%Y/%m/%d}:{end:%Y/%m/%d}[edat]", journals, exclude_types, email, api_key)
+
+
+def search_pubmed(term, journals, exclude_types, email=None, api_key=None):
+    """Papers matching any PubMed search, such as an author's name; journals names the venues it knows."""
     params = {"db": "pubmed", "tool": "neuropaperbot"}
     if email:
         params["email"] = email
     if api_key:
         params["api_key"] = api_key
-    query = " OR ".join(f'"{abbr}"[ta]' for abbr in journals)
-    term = f"({query}) AND {start:%Y/%m/%d}:{end:%Y/%m/%d}[edat]"
     resp = session.get(
         f"{EUTILS}/esearch.fcgi", params={**params, "term": term, "retmode": "json", "retmax": 1000}, timeout=TIMEOUT
     )
@@ -110,13 +118,16 @@ def pubmed_paper(article, names, exclude_types):
     if not abstract or not doi:
         return None  # nothing to rank or hook without an abstract, nothing to link without a DOI
     abbr = citation.findtext("MedlineJournalInfo/MedlineTA") or art.findtext("Journal/ISOAbbreviation") or ""
-    authors = [clean_text(a.findtext("LastName") or a.findtext("CollectiveName")) for a in art.iterfind("AuthorList/Author")]
+    people = list(art.iterfind("AuthorList/Author"))
+    authors = [clean_text(a.findtext("LastName") or a.findtext("CollectiveName")) for a in people]
+    keys = [author_key(a.findtext("LastName"), a.findtext("ForeName") or a.findtext("Initials") or "") for a in people if a.findtext("LastName")]
     return {
         "doi": doi,
         "source": "pubmed",
         "venue": names.get(abbr.lower(), abbr),
         "title": clean_text(text_of(art.find("ArticleTitle"))).rstrip("."),
         "authors": [a for a in authors if a],
+        "author_keys": keys,
         "date": entrez_date(article),
         "link": f"https://doi.org/{doi}",
         "abstract": abstract,

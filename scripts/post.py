@@ -7,9 +7,10 @@ posting.min_hours_between_posts old, so drafts you approve together still go out
   python scripts/post.py --now        don't wait for the spacing
   python scripts/post.py --dry-run    show what would be posted
 
-Env: BLUESKY_USERNAME and BLUESKY_PASSWORD (an app password) for Bluesky; LINKEDIN_ACCESS_TOKEN for
-     LinkedIn (from linkedin_login.py); X_API_KEY, X_API_KEY_SECRET, X_ACCESS_TOKEN and
-     X_ACCESS_TOKEN_SECRET for X; TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to update the messages.
+Env: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, to update the messages (and, with
+     posting.telegram_channel in config.json, to post to your channel); BLUESKY_USERNAME and
+     BLUESKY_PASSWORD (an app password) for Bluesky; LINKEDIN_ACCESS_TOKEN for LinkedIn (from
+     linkedin_login.py); X_API_KEY, X_API_KEY_SECRET, X_ACCESS_TOKEN and X_ACCESS_TOKEN_SECRET for X.
 """
 import argparse
 import re
@@ -23,6 +24,8 @@ from compose import (
     LINKEDIN_LIMIT,
     PLATFORMS,
     X_LIMIT,
+    channel_link,
+    channel_post,
     enabled_platforms,
     pending,
     post_text,
@@ -70,7 +73,16 @@ def bluesky_result(uri, cid):
     return {"uri": uri, "cid": cid, "url": f"https://bsky.app/profile/{did}/post/{rkey}"}
 
 
-def post_bluesky(d, hashtag, png):
+def post_channel(d, cfg, png):
+    """The card and the post, in your public Telegram channel."""
+    channel = cfg["posting"].get("telegram_channel")
+    if not channel:
+        raise SystemExit("Set posting.telegram_channel in config.json to your channel's @username")
+    msg = telegram_api.send_photo(png, channel_post(d, cfg["posting"].get("hashtag")), chat=channel)
+    return {"message_id": msg["message_id"], "url": channel_link(channel, msg["message_id"])}
+
+
+def post_bluesky(d, cfg, png):
     from atproto import Client, models
 
     username, password = require_env("BLUESKY_USERNAME", "BLUESKY_PASSWORD")
@@ -94,12 +106,12 @@ def post_bluesky(d, hashtag, png):
             uri=d["link"], title=d["title"], description=d.get("snippet") or "", thumb=thumb
         )
     )
-    text = post_text(d, hashtag)
+    text = post_text(d, cfg["posting"].get("hashtag"))
     resp = client.send_post(text=text, facets=facets(client, text, models), embed=card, langs=["en"])
     return bluesky_result(resp.uri, resp.cid)
 
 
-def post_linkedin(d, hashtag, png):
+def post_linkedin(d, cfg, png):
     """A link card posted as you, from your own profile."""
     (token,) = require_env("LINKEDIN_ACCESS_TOKEN")
     author = linkedin_api.person_urn(token)
@@ -111,18 +123,24 @@ def post_linkedin(d, hashtag, png):
             raise
         print(f"LinkedIn thumbnail upload failed, posting without it: {exc}")
     urn = linkedin_api.create_post(
-        token, author, post_text(d, hashtag, limit=LINKEDIN_LIMIT), d["link"], d["title"], d.get("snippet") or "", thumbnail
+        token,
+        author,
+        post_text(d, cfg["posting"].get("hashtag"), limit=LINKEDIN_LIMIT),
+        d["link"],
+        d["title"],
+        d.get("snippet") or "",
+        thumbnail,
     )
     return {"urn": urn, "url": linkedin_api.post_url(urn) if urn else None}
 
 
-def post_x(d, hashtag, png):
+def post_x(d, cfg, png):
     """Text only, with the link in a reply: X shows posts with links to fewer people."""
     import tweepy
 
     key, secret, token, token_secret = require_env("X_API_KEY", "X_API_KEY_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET")
     client = tweepy.Client(consumer_key=key, consumer_secret=secret, access_token=token, access_token_secret=token_secret)
-    tweet_id = client.create_tweet(text=post_text(d, hashtag, limit=X_LIMIT)).data["id"]
+    tweet_id = client.create_tweet(text=post_text(d, cfg["posting"].get("hashtag"), limit=X_LIMIT)).data["id"]
     try:
         client.create_tweet(text=f"Read the paper: {d['link']}", in_reply_to_tweet_id=tweet_id)
     except Exception as exc:
@@ -130,7 +148,7 @@ def post_x(d, hashtag, png):
     return {"tweet_id": tweet_id, "url": f"https://x.com/i/web/status/{tweet_id}"}
 
 
-POSTERS = {"bluesky": post_bluesky, "linkedin": post_linkedin, "x": post_x}
+POSTERS = {"channel": post_channel, "bluesky": post_bluesky, "linkedin": post_linkedin, "x": post_x}
 
 
 def last_post(posted, platform):
@@ -176,7 +194,7 @@ def main():
             continue
 
         try:
-            result = POSTERS[platform](d, hashtag, make_card(d, cfg.get("name", "Neuro Paper Bot")))
+            result = POSTERS[platform](d, cfg, make_card(d, cfg.get("name", "Neuro Paper Bot")))
         except Exception as exc:
             message = str(exc)[:200]
             errors.append(f"{name}: {message}")

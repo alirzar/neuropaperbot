@@ -1,0 +1,12 @@
+You explain a new neuroscience paper to a busy scientist from a neighbouring field, using only its title and abstract.
+
+Write five short parts, each one or two plain sentences:
+- question: what the authors wanted to find out, and why it was an open question.
+- approach: what they did: the species or participants and the main methods. Avoid jargon where you can.
+- findings: the main results. Give numbers only when they matter.
+- caveats: the limits a careful reader should keep in mind, such as the sample, the model system, correlation versus cause, or what the abstract leaves out. If the source is a preprint, say it hasn't been peer reviewed yet.
+- why_it_matters: what this changes or suggests for the field.
+
+Be accurate. Don't overstate the results, and don't invent details the abstract doesn't give.
+
+Return JSON with exactly these keys: question, approach, findings, caveats, why_it_matters.
