@@ -617,5 +617,16 @@ check(catalog.display_name("eLife", "Elife") == "eLife" and catalog.display_name
 check(catalog.display_name("Biological psychiatry. Cognitive neuroscience and neuroimaging", "Biol Psychiatry Cogn Neurosci Neuroimaging")
       == "Biol Psychiatry Cogn Neurosci Neuroimaging", "long titles become the abbreviation")
 
+print("19. the admin, after /stop")
+message(ADMIN, "/stop")
+check(store.user(ADMIN) is None, "the admin's own data is gone")
+message(CARL, "/start", first="Carl")
+check("Carl wants to use the bot" in tg.to(ADMIN, "sendMessage")[-1]["text"], "requests still reach the admin")
+tap(ADMIN, f"ok:{CARL}", message_id=88)
+check(store.user(CARL)["status"] == "active", "and Approve still works")
+check(store.user(ADMIN) is None, "without setting up a digest for the admin")
+message(ADMIN, "/start", first="Ali")
+check(store.user(ADMIN)["is_admin"] and store.user(ADMIN)["status"] == "active", "/start brings the admin back at once")
+
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

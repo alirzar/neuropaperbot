@@ -315,7 +315,7 @@ class Bot:
         action, _, value = data.partition(":")
         user = self.store.user(uid)
         if action in ("ok", "no"):
-            return self.decide(user, int(value), action == "ok", message_id)
+            return self.decide(uid, int(value), action == "ok", message_id)
         if not user or user["status"] != "active":
             return Alert("Send /start first.")
         handler = {
@@ -342,8 +342,8 @@ class Bot:
         }.get(action)
         return handler() if handler else None
 
-    def decide(self, admin, uid, approve, message_id):
-        if not admin or not admin["is_admin"]:
+    def decide(self, tapper, uid, approve, message_id):
+        if tapper != self.admin:  # by Telegram ID, so the admin can approve even after /stop
             return None
         user = self.store.user(uid)
         if not user or user["status"] != "pending":
