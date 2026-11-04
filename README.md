@@ -2,16 +2,16 @@
 
 Finds new neuroscience papers on bioRxiv, medRxiv and in journals you choose, and uses Gemini to pick and explain them. There are two versions:
 
-- **[The public bot](#the-public-bot):** a Telegram bot other people can join. Each person gets a daily digest matched to their interests, and can search recent papers, save them, follow authors and ask for plain-language summaries. It runs on a computer that stays on, such as a lab server.
+- **[The public bot](#the-public-bot):** a bot other people can join, on Telegram and on Discord. Each person gets a daily digest matched to their interests, and can search recent papers, save them, follow authors and ask for plain-language summaries. It runs on a computer that stays on, such as a lab server.
 - **[The GitHub version](#the-github-version):** runs hourly on GitHub Actions and sends only you a few drafts each weekday, to post to a channel, LinkedIn or Bluesky. The public bot replaces it.
 
 Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT license).
 
 ## The public bot
 
-[`scripts/bot.py`](scripts/bot.py) keeps running and talks to everyone who uses it:
+[`scripts/bot.py`](scripts/bot.py) keeps running and talks to everyone who uses it, on Telegram or, once you [add it to Discord](#add-it-to-discord), on Discord:
 
-- **Joining:** someone sends `/start`, and you get **✅ Approve / ❌ Deny**. Once approved, they pick from 12 areas, describe their interests in their own words, choose their sources, and pick a time zone and an hour.
+- **Joining:** someone sends `/start`, and you get **✅ Approve / ❌ Deny**. Once approved, they pick from 12 areas, describe their interests in their own words, choose their sources, and pick a time zone and an hour. Then they see a summary of their choices, can change any part, and tap **✅ Start my digest**: nothing is sent before that. `/settings` shows the same summary anytime.
 - **A daily digest** at their hour: the new papers that suit them best, each as a card with **👍 / 👎** (which tune later picks), **💾 Save**, **📄 Summary** and **📋 Copy**. Your own digest also has **💼 LinkedIn**. A **➡️ 3 more** button under the digest brings the next papers on their list, up to 5 times a day.
 - **Sources:** `/sources` lists where papers come from: bioRxiv and medRxiv sections, neuroscience journals, and general journals such as Nature, Science and eLife, from which only the brain papers come. Nothing is ticked to start with: each person ticks the ones they want, or none. **➕ Add a journal** takes any journal PubMed indexes, by name, abbreviation or ISSN. The bot checks that it published in the past year, and then offers it to everyone.
 - **On request:** `/find <topic>` searches the last 60 days of papers. Pasting a DOI or a bioRxiv or medRxiv link gets a plain-language summary. `/follow <name>` sends a message when that author publishes, in any PubMed journal or on bioRxiv.
@@ -19,12 +19,12 @@ Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT l
 
 **How it picks papers.** Every morning at 06:00 UTC it fetches new papers from the base sources (`sources` in `config.json`) and from every source someone has ticked. A source nobody had is fetched right away, the moment someone ticks it. Gemini turns each paper, and each person's topics and keywords, into a "fingerprint" (an embedding), so that similar subjects get similar fingerprints. A person's digest starts with the week's new papers from the sources they ticked, closest to their interests first, nudged toward papers like the ones they gave 👍, away from the 👎 ones, and slightly by Gemini's quality score. When those run out, the best matches from every other source follow, and someone who ticks nothing gets the best matches from everything. From general journals, PubMed sends only papers whose title or abstract mentions the brain or nervous system, and Gemini then sets aside any that aren't really neuroscience, such as a "neural network" for battery materials. Gemini works per paper, not per person, so costs grow with the number of papers rather than people. Summaries are the exception, which is why each person gets 10 a day (you have no limit).
 
-**Privacy.** People's data stays in `data/db/bot.db` on the computer running the bot and is never committed to git: their Telegram name and ID, their interests and sources, what they were sent, and their 👍/👎, saves and follows. Journals people add are kept without their names. `/privacy` tells people this, and `/stop` deletes everything about them.
+**Privacy.** People's data stays in `data/db/bot.db` on the computer running the bot and is never committed to git: their Telegram or Discord name and ID, their interests and sources, what they were sent, and their 👍/👎, saves and follows. Journals people add are kept without their names. `/privacy` tells people this, and `/stop` deletes everything about them.
 
 ### Try it on your computer
 
 1. In Telegram, ask **@BotFather** for a new bot (`/newbot`). Don't reuse the GitHub version's bot: two programs can't read the same bot's messages.
-2. In `.env`, set `TELEGRAM_BOT_TOKEN` to the new bot's token. `TELEGRAM_CHAT_ID` stays your own ID, which makes you the admin. `GEMINI_API_KEY` is needed too, and `LINKEDIN_ACCESS_TOKEN` is optional.
+2. In `.env`, set `TELEGRAM_BOT_TOKEN` to the new bot's token. `TELEGRAM_CHAT_ID` stays your own ID, which makes you the admin. `GEMINI_API_KEY` is needed too. `DISCORD_BOT_TOKEN` ([Discord](#add-it-to-discord)) and `LINKEDIN_ACCESS_TOKEN` are optional.
 3. Run `python scripts/bot.py`, and send your new bot `/start` to set up your own digest. Its first paper update starts right away and takes a minute or two. Stop the bot with **Ctrl+C**.
 4. Optional, with @BotFather: `/setuserpic` (use `assets/logo.png`), `/setdescription`, `/setjoingroups` → **Disable**, and `/setcommands` with the list below, so the commands show up in Telegram's menu.
 
@@ -39,15 +39,27 @@ topics - The areas you follow
 keywords - Your interests in your own words
 sources - The journals and preprints you get
 time - When your digest arrives
-settings - Papers per digest
+settings - Your choices, and changing them
 privacy - What the bot keeps
 stop - Delete your data
 help - What the bot can do
 ```
 
+### Add it to Discord
+
+The same program also runs the bot on Discord, for people without Telegram. Everyone shares one database and one daily paper update, so Discord adds no Gemini cost beyond each person's own summaries and searches.
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications), click **New Application**, and name it (for example *Neuro Paper Digest*). You can upload `assets/logo.png` as its icon.
+2. On the **Bot** page, click **Reset Token**, copy the token, and paste it into `.env` as `DISCORD_BOT_TOKEN=...`. On the same page, turn off **Public Bot**, so only you can add it to servers. It needs none of the "privileged intents".
+3. Discord only lets a bot message people who share a server with it, so the bot needs a server. Make one (in Discord: **+** → **Create My Own**), or use one you run.
+4. Restart the bot. Its log shows a link starting with `https://discord.com/oauth2/authorize`: open it and add the bot to your server. The bot sets up its slash commands by itself.
+5. Share the server's invite link. People join, find the bot in the member list, and send it a message or `/start`. You approve them in Telegram, as for everyone else.
+
+On Discord, everything happens in a direct message with the bot, with the same setup, digest, buttons and commands. Lists with many choices (areas, sources, time zones) are dropdown menus, since Discord allows at most 25 buttons on a message. If someone leaves the server, the bot can no longer message them: their digest is skipped, and the log says so.
+
 ### Run it on a server
 
-Any Linux machine that stays on and can reach the internet will do. It doesn't need open ports or a web address, because the bot fetches its messages from Telegram. If the server is a shared cluster with a job scheduler (such as SLURM), ask first: those often stop long-running programs.
+Any Linux machine that stays on and can reach the internet will do. It doesn't need open ports or a web address, because the bot fetches its messages from Telegram and Discord. If the server is a shared cluster with a job scheduler (such as SLURM), ask first: those often stop long-running programs.
 
 **1. Install it**, here with conda:
 
@@ -268,6 +280,21 @@ A channel anyone can join, where the bot posts the papers you pick: the card, th
 | `posted.json` | A record of everything posted, one entry per platform |
 | `seen.json` | Papers already scored, so none is considered twice. Entries are kept for 60 days. |
 | `state.json` | The date of the last batch, and how far the bot has read in Telegram |
+
+## Tests
+
+```
+python tests/run_all.py
+```
+
+Each test works in a throwaway copy of the project with its own database, so your data is never touched. Telegram, Discord, Gemini, LinkedIn and Bluesky are replaced by stand-ins, so no keys are needed. Run them after changing the code, and before moving the bot to a server.
+
+| Test | What it covers |
+|---|---|
+| `test_bot.py` | The public bot on Telegram: joining, setup and its summary, digests and **➡️ more**, sources and adding journals, summaries, search, author alerts and the daily schedule |
+| `test_discord.py` | The same bot on Discord: its format, dropdowns, slash commands, and one person from joining to leaving |
+| `test_quota.py` | Gemini's free-tier limits, and the daily update carrying on where it stopped |
+| `test_channel.py`, `test_platforms.py` | The GitHub version: batches, review taps, and posting to the channel, Bluesky and LinkedIn. These two fetch real papers, so they need internet access. |
 
 ## Notes
 

@@ -1,5 +1,6 @@
 # The versions this bot was built and tested with; minor updates are allowed.
 atproto~=0.0.73
+discord.py~=2.7  # the public bot on Discord
 google-genai~=2.34
 numpy~=2.4
 Pillow~=13.0

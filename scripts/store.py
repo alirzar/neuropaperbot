@@ -1,8 +1,11 @@
 """The public bot's database: who uses it, the papers it knows, what each person was sent, liked,
 saved and follows, and the journals people added.
 
-It's one SQLite file, data/db/bot.db, kept out of git because it holds people's Telegram IDs and
-interests. /stop deletes everything about a person.
+It's one SQLite file, data/db/bot.db, kept out of git because it holds people's Telegram and
+Discord IDs and interests. /stop deletes everything about a person.
+
+People from both apps share one table: Telegram IDs have at most 52 bits and Discord's are larger,
+so the two never collide.
 """
 import json
 import sqlite3
@@ -18,7 +21,8 @@ DB_PATH = DATA / "db" / "bot.db"  # in a folder of its own, with the files SQLit
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,          -- Telegram user ID, which is also their private chat's ID
+    id INTEGER PRIMARY KEY,          -- their Telegram or Discord user ID
+    platform TEXT NOT NULL DEFAULT 'telegram',  -- telegram or discord
     name TEXT,
     username TEXT,
     status TEXT NOT NULL,            -- pending, active or denied
@@ -69,6 +73,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 ADDED_COLUMNS = [  # columns that came later, added to older databases when the bot starts
     ("users", "sources", "TEXT"),
+    ("users", "platform", "TEXT NOT NULL DEFAULT 'telegram'"),
     ("papers", "src", "TEXT"),
     ("papers", "hidden", "INTEGER NOT NULL DEFAULT 0"),
 ]
@@ -141,10 +146,11 @@ class Store:
             rows = self.run("SELECT * FROM users ORDER BY created_at")
         return [_user(r) for r in rows]
 
-    def add_user(self, uid, name, username, status, is_admin=False):
+    def add_user(self, uid, name, username, status, is_admin=False, platform="telegram"):
         self.run(
-            "INSERT OR IGNORE INTO users(id, name, username, status, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            uid, name, username, status, int(is_admin), iso(),
+            "INSERT OR IGNORE INTO users(id, platform, name, username, status, is_admin, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            uid, platform, name, username, status, int(is_admin), iso(),
         )
 
     def update_user(self, uid, **fields):

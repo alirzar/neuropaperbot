@@ -1,4 +1,4 @@
-"""A minimal Telegram Bot API client: only the calls review.py and post.py need.
+"""A minimal Telegram Bot API client: only the calls review.py, post.py and the public bot need.
 
 API reference: https://core.telegram.org/bots/api
 """
@@ -97,6 +97,27 @@ def typing(chat):
         call("sendChatAction", chat_id=chat, action="typing")
     except TelegramError:
         pass
+
+
+class App:
+    """The public bot's way to talk to people on Telegram (discord_api.App has the same methods)."""
+
+    name = "Telegram"
+
+    def send(self, chat, text, buttons=None):
+        return send(chat, text, buttons)["message_id"]
+
+    def photo(self, chat, png, caption, buttons=None):
+        return photo(chat, png, caption, buttons)["message_id"]
+
+    def edit(self, chat, message_id, text, buttons=None):
+        edit(chat, message_id, text, buttons)
+
+    def edit_buttons(self, chat, message_id, buttons):
+        edit_markup(chat, message_id, buttons)
+
+    def typing(self, chat):
+        typing(chat)
 
 
 def chat_id():
