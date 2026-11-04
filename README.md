@@ -45,18 +45,38 @@ help - What the bot can do
 
 ### Run it on a server
 
-Any Linux machine that stays on, has Python 3.11 or newer, and can reach the internet will do. It doesn't need open ports or a web address, because the bot fetches its messages from Telegram.
+Any Linux machine that stays on and can reach the internet will do. It doesn't need open ports or a web address, because the bot fetches its messages from Telegram. If the server is a shared cluster with a job scheduler (such as SLURM), ask first: those often stop long-running programs.
+
+**1. Install it**, here with conda:
 
 ```
 git clone https://github.com/alirzar/neuropaperbot.git
 cd neuropaperbot
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-nano .env                          # the same lines as your computer's .env
-.venv/bin/python scripts/bot.py    # check that it starts, then Ctrl+C
+conda create -n neurobot python=3.12 -y
+conda activate neurobot
+pip install -r requirements.txt
+which python      # note this path: step 3 needs it
 ```
 
-To keep it running, and restart it after a crash or a reboot, make it a systemd service. Save this as `/etc/systemd/system/neuropaperbot.service`, with your own username and folder:
+**2. Bring over your settings.** First stop the bot on your computer (Ctrl+C in its window): two copies can't run at once, and the database shouldn't change while you copy it. Then, from the project folder on your computer:
+
+```
+scp .env YOUR_USERNAME@SERVER:neuropaperbot/.env
+ssh YOUR_USERNAME@SERVER "mkdir -p neuropaperbot/data/db"
+scp data/db/bot.db YOUR_USERNAME@SERVER:neuropaperbot/data/db/bot.db
+```
+
+Copying the database keeps everyone's setup; without it, people set up again. Don't send `.env` by email: it holds your keys. On the server, check that the bot starts with `python scripts/bot.py`, then stop it with Ctrl+C.
+
+**3. Keep it running.** Without admin rights, use [`scripts/run_bot.sh`](scripts/run_bot.sh). It restarts the bot whenever it stops, and cron starts the script again after the server restarts. Run `crontab -e` and add this line, with your Python path from step 1:
+
+```
+*/10 * * * * PYTHON=/path/to/envs/neurobot/bin/python flock -n $HOME/.neuropaperbot.lock $HOME/neuropaperbot/scripts/run_bot.sh
+```
+
+Within 10 minutes the bot is running. Its log is `logs/bot.log`, which you can follow with `tail -f logs/bot.log`. To stop the bot for good, delete that line with `crontab -e`, then run `pkill -f run_bot.sh; pkill -f scripts/bot.py`.
+
+With admin rights, a systemd service does the same job. Save this as `/etc/systemd/system/neuropaperbot.service`, with your own username, folder and Python path:
 
 ```
 [Unit]
@@ -66,7 +86,7 @@ After=network-online.target
 [Service]
 User=YOUR_USERNAME
 WorkingDirectory=/home/YOUR_USERNAME/neuropaperbot
-ExecStart=/home/YOUR_USERNAME/neuropaperbot/.venv/bin/python scripts/bot.py
+ExecStart=/path/to/envs/neurobot/bin/python scripts/bot.py
 Restart=always
 RestartSec=10
 
@@ -74,7 +94,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Start it with `sudo systemctl enable --now neuropaperbot`, and follow its log with `journalctl -u neuropaperbot -f`. If you don't have admin rights on the server, ask whoever runs it to set this up, or run the bot inside `tmux` for now.
+Start it with `sudo systemctl enable --now neuropaperbot`, and follow its log with `journalctl -u neuropaperbot -f`.
 
 Back up `data/db/bot.db` now and then: it's the only copy of everyone's settings.
 

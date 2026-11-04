@@ -12,5 +12,8 @@ previews/
 # The public bot's database: people's Telegram IDs and interests stay on the machine running it
 data/db/
 
+# The public bot's log, from scripts/run_bot.sh
+logs/
+
 # The original OECS bot, kept next to this one for reference
 oecs-bot-main/
