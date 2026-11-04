@@ -1,12 +1,12 @@
-"""Fetch new neuroscience papers from bioRxiv and PubMed.
+"""Fetch new neuroscience papers from bioRxiv, medRxiv and PubMed.
 
-Both are free public APIs:
-  bioRxiv  api.biorxiv.org: one subject category, first versions only (no revisions)
-  PubMed   NCBI E-utilities: the journals in config.json, by the date added to PubMed
+All free public APIs:
+  bioRxiv, medRxiv  api.biorxiv.org: one subject category each, first versions only (no revisions)
+  PubMed            NCBI E-utilities: chosen journals, by the date added to PubMed
 
 Every paper comes back in one shape:
-  {doi, source, venue, title, authors (last names), author_keys ('smith j', for author alerts),
-   date, link, abstract, license}
+  {doi, source, venue, src (which source, like "pubmed:neuron"), title, authors (last names),
+   author_keys ('smith j', for author alerts), date, link, abstract, license}
 
 Run it on its own to see what a batch would find (saves nothing):
   python scripts/fetch_papers.py
@@ -14,6 +14,7 @@ Run it on its own to see what a batch would find (saves nothing):
 """
 import argparse
 import os
+import threading
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -23,19 +24,60 @@ import requests
 
 from common import author_key, clean_text, load_config, name_key, now_utc, shorten
 
-BIORXIV = "https://api.biorxiv.org/details/biorxiv/{start}/{end}/{cursor}"
+BIORXIV = "https://api.biorxiv.org/details/{server}/{start}/{end}/{cursor}"
+PREPRINTS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}  # the servers api.biorxiv.org covers
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 TIMEOUT = 60
 
+# Words in a title or abstract that mark a paper as being about the brain. Used for journals that
+# publish far beyond neuroscience; it's generous on purpose, and Gemini makes the final call.
+NEURO_FILTER = " OR ".join(
+    f"{word}[tiab]"
+    for word in (
+        "brain*", "neur*", "cortex", "cortical", "hippocamp*", "synap*", "glia*", "astrocyt*", "microglia*",
+        "oligodendrocyt*", "axon*", "dendrit*", "cerebell*", "thalam*", "hypothalam*", "amygdal*", "striat*",
+        "dopamin*", "serotonin*", '"nervous system"', '"spinal cord"', "retina*", "olfactor*", "auditory",
+        "somatosensory", "nocicept*", "cognit*", "sleep", "alzheimer*", "parkinson*", "epilep*", "schizophreni*",
+        "autis*", "psychiatr*", "anxiety", "mental",
+    )
+)
+
 session = requests.Session()
 session.headers["User-Agent"] = "neuropaperbot/0.1"
+_ncbi_lock = threading.Lock()
+_ncbi_last = [0.0]
 
 
-def fetch_biorxiv(start, end, category):
+def eutils(path, api_key=None, **data):
+    """POST to an NCBI E-utility, at most 3 requests a second (10 with a key), even across threads."""
+    gap = 0.11 if api_key else 0.34
+    data = {"tool": "neuropaperbot", **data, **({"api_key": api_key} if api_key else {})}
+    for attempt in range(3):
+        with _ncbi_lock:
+            time.sleep(max(0.0, _ncbi_last[0] + gap - time.monotonic()))
+            _ncbi_last[0] = time.monotonic()
+        resp = session.post(f"{EUTILS}/{path}", data=data, timeout=TIMEOUT)
+        if resp.status_code != 429:  # too many requests: wait a moment and try again
+            break
+        time.sleep(1 + attempt)
+    resp.raise_for_status()
+    return resp
+
+
+def pubmed_count(term, api_key=None):
+    """How many PubMed records match a search."""
+    found = eutils("esearch.fcgi", api_key, db="pubmed", term=term, retmode="json", retmax=0).json()
+    return int(found["esearchresult"]["count"])
+
+
+def fetch_biorxiv(start, end, category, server="biorxiv"):
+    """First versions posted in one category of bioRxiv or (with server="medrxiv") medRxiv."""
     papers, cursor, total = [], 0, 1
     while cursor < total:
         resp = session.get(
-            BIORXIV.format(start=start, end=end, cursor=cursor), params={"category": category}, timeout=TIMEOUT
+            BIORXIV.format(server=server, start=start, end=end, cursor=cursor),
+            params={"category": category},
+            timeout=TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -47,16 +89,17 @@ def fetch_biorxiv(start, end, category):
         cursor += len(page)  # the API returns 30 records per page
         for p in page:
             if str(p.get("version")) == "1":  # later versions are revisions of older preprints
-                papers.append(biorxiv_record(p))
+                papers.append(biorxiv_record(p, server))
     return papers
 
 
-def biorxiv_record(p):
-    """One record from the bioRxiv API, in the shape every paper has."""
+def biorxiv_record(p, server="biorxiv"):
+    """One record from the bioRxiv (or medRxiv) API, in the shape every paper has."""
     return {
         "doi": p["doi"],
-        "source": "biorxiv",
-        "venue": "bioRxiv preprint",
+        "source": server,
+        "venue": f"{PREPRINTS.get(server, server)} preprint",
+        "src": f"{server}:{(p.get('category') or '').strip().lower()}",
         "title": clean_text(p.get("title")),
         "authors": biorxiv_authors(p.get("authors")),
         "author_keys": [name_key(part) for part in (p.get("authors") or "").split(";") if part.strip()],
@@ -79,27 +122,36 @@ def fetch_pubmed(start, end, journals, exclude_types, email=None, api_key=None):
     return search_pubmed(f"({query}) AND {start:%Y/%m/%d}:{end:%Y/%m/%d}[edat]", journals, exclude_types, email, api_key)
 
 
+def fetch_journals(start, end, journals, general, names, exclude_types, email=None, api_key=None):
+    """Papers from PubMed journals, given as abbreviations (its [ta] field): everything from `journals`,
+    and only the brain papers from `general` ones, which come back marked "broad".
+    names maps abbreviations to the names shown on cards."""
+    groups = []
+    if journals:
+        groups.append(" OR ".join(f'"{abbr}"[ta]' for abbr in journals))
+    if general:
+        groups.append("(" + " OR ".join(f'"{abbr}"[ta]' for abbr in general) + f") AND ({NEURO_FILTER})")
+    if not groups:
+        return []
+    term = " OR ".join(f"({g})" for g in groups)
+    window = f"{start:%Y/%m/%d}:{end:%Y/%m/%d}[edat]"
+    papers = search_pubmed(f"({term}) AND hasabstract AND {window}", names, exclude_types, email, api_key)
+    wide = {f"pubmed:{abbr.lower()}" for abbr in general}
+    for p in papers:
+        p["broad"] = p["src"] in wide
+    return papers
+
+
 def search_pubmed(term, journals, exclude_types, email=None, api_key=None):
     """Papers matching any PubMed search, such as an author's name; journals names the venues it knows."""
-    params = {"db": "pubmed", "tool": "neuropaperbot"}
-    if email:
-        params["email"] = email
-    if api_key:
-        params["api_key"] = api_key
-    resp = session.get(
-        f"{EUTILS}/esearch.fcgi", params={**params, "term": term, "retmode": "json", "retmax": 1000}, timeout=TIMEOUT
-    )
-    resp.raise_for_status()
-    ids = resp.json()["esearchresult"]["idlist"]
+    params = {"db": "pubmed", **({"email": email} if email else {})}
+    found = eutils("esearch.fcgi", api_key, **params, term=term, retmode="json", retmax=5000).json()
+    ids = found["esearchresult"]["idlist"]
 
     names = {abbr.lower(): name for abbr, name in journals.items()}
     papers = []
     for i in range(0, len(ids), 200):
-        time.sleep(0.15 if api_key else 0.4)  # NCBI allows 10 requests/second with a key, 3 without
-        resp = session.post(
-            f"{EUTILS}/efetch.fcgi", data={**params, "id": ",".join(ids[i : i + 200]), "retmode": "xml"}, timeout=TIMEOUT
-        )
-        resp.raise_for_status()
+        resp = eutils("efetch.fcgi", api_key, **params, id=",".join(ids[i : i + 200]), retmode="xml")
         for article in ET.fromstring(resp.content).iter("PubmedArticle"):
             paper = pubmed_paper(article, names, exclude_types)
             if paper:
@@ -125,6 +177,7 @@ def pubmed_paper(article, names, exclude_types):
         "doi": doi,
         "source": "pubmed",
         "venue": names.get(abbr.lower(), abbr),
+        "src": f"pubmed:{abbr.lower()}",
         "title": clean_text(text_of(art.find("ArticleTitle"))).rstrip("."),
         "authors": [a for a in authors if a],
         "author_keys": keys,
@@ -183,10 +236,45 @@ def fetch_papers(cfg, start, end):
             )
         except Exception as exc:
             errors.append(f"PubMed: {exc}")
+    return one_per_doi(papers), errors
+
+
+def fetch_sources(sources, start, end, pubmed=None):
+    """Papers from a list of sources (see catalog.py) for the window, one entry per DOI.
+
+    pubmed is config.json's sources.pubmed, for exclude_types and email. Returns (papers, errors).
+    """
+    pubmed = pubmed or {}
+    papers, errors = [], []
+    for s in sources:
+        if s["kind"] in PREPRINTS:
+            try:
+                papers += fetch_biorxiv(start, end, s["query"], server=s["kind"])
+            except Exception as exc:
+                errors.append(f"{s['name']}: {exc}")
+    journals = [s for s in sources if s["kind"] == "pubmed"]
+    if journals:
+        try:
+            papers += fetch_journals(
+                start,
+                end,
+                [s["query"] for s in journals if not s["broad"]],
+                [s["query"] for s in journals if s["broad"]],
+                {s["query"]: s["name"] for s in journals},
+                set(pubmed.get("exclude_types", [])),
+                pubmed.get("email") or None,
+                os.getenv("NCBI_API_KEY"),
+            )
+        except Exception as exc:
+            errors.append(f"PubMed: {exc}")
+    return one_per_doi(papers), errors
+
+
+def one_per_doi(papers):
     unique = {}
     for p in papers:
         unique.setdefault(p["doi"].lower(), p)
-    return list(unique.values()), errors
+    return list(unique.values())
 
 
 def add_window_args(parser):

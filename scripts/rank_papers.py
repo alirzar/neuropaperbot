@@ -28,12 +28,17 @@ class Score(BaseModel):
     reason: str
 
 
+class TopicScore(Score):
+    neuro: bool  # is it neuroscience at all? The public bot asks, for papers from general journals
+
+
 def load_prompt():
     return PROMPT.read_text(encoding="utf-8").strip()
 
 
-def score_papers(client, models, prompt, papers):
-    """Returns {doi (lowercase): {"score": int, "reason": str}}. Papers Gemini leaves out are missing."""
+def score_papers(client, models, prompt, papers, schema=Score):
+    """Returns {doi (lowercase): {"score": int, "reason": str}}, plus "neuro" with schema=TopicScore.
+    Papers Gemini leaves out are missing."""
     scores = {}
     for i in range(0, len(papers), BATCH_SIZE):
         # Short IDs rather than DOIs, which a model can garble.
@@ -42,12 +47,13 @@ def score_papers(client, models, prompt, papers):
             f"ID: {pid}\nSOURCE: {p['venue']}\nTITLE: {p['title']}\nABSTRACT: {p['abstract'][:ABSTRACT_CHARS]}"
             for pid, p in batch.items()
         )
-        for item in generate_scores(client, models, f"{prompt}\n\nPAPERS\n\n{listing}"):
+        for item in generate_scores(client, models, f"{prompt}\n\nPAPERS\n\n{listing}", schema):
             paper = batch.get(str(item.get("id")))
             if paper and isinstance(item.get("score"), int):
                 scores[paper["doi"].lower()] = {
                     "score": max(1, min(10, item["score"])),
                     "reason": str(item.get("reason", "")).strip(),
+                    **({"neuro": item["neuro"]} if isinstance(item.get("neuro"), bool) else {}),
                 }
         missed = sum(1 for p in batch.values() if p["doi"].lower() not in scores)
         if missed:
@@ -55,8 +61,8 @@ def score_papers(client, models, prompt, papers):
     return scores
 
 
-def generate_scores(client, models, contents):
-    config = {"response_mime_type": "application/json", "response_schema": list[Score], "temperature": 0.2}
+def generate_scores(client, models, contents, schema=Score):
+    config = {"response_mime_type": "application/json", "response_schema": list[schema], "temperature": 0.2}
     for _ in range(2):  # with a schema a garbled reply is rare, but worth one more try
         try:
             items = json.loads(gemini_generate(client, models, contents, config))

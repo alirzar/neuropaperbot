@@ -1,9 +1,10 @@
 """The public bot: one program that keeps running, answers people, and sends each a daily digest.
 
 People ask to join with /start, and you (the admin, TELEGRAM_CHAT_ID) approve them with a tap.
-Each picks topics, keywords, a time zone and an hour, then gets the new papers that suit them
-best every day, with buttons for 👍/👎, saving, a plain-language summary and a ready-to-copy post.
-They can also search recent papers, follow authors, and paste a DOI or bioRxiv link for a summary.
+Each picks topics, keywords, sources, a time zone and an hour, then gets the new papers that suit
+them best every day, with buttons for 👍/👎, saving, a plain-language summary and a ready-to-copy
+post, and a ➡️ button for the next few. They can also search recent papers, follow authors, add
+journals, and paste a DOI or bioRxiv link for a summary.
 
   python scripts/bot.py      runs until you stop it with Ctrl+C
 
@@ -19,6 +20,7 @@ import time
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+import catalog
 import digest
 import explain
 import telegram_api as tg
@@ -44,7 +46,9 @@ DEFAULTS = {  # overridden by the "bot" section of config.json
     "summaries_per_day": 10,
     "searches_per_day": 30,
     "follows_per_person": 20,
+    "more_per_day": 5,
 }
+SETUP_STEPS = ("topics", "keywords", "sources", "journal", "tz", "hour")
 
 ZONES = [
     ("Eastern (Toronto, New York)", "America/Toronto"),
@@ -66,18 +70,24 @@ COUNTS = [1, 3, 5, 8]
 
 HELP = """I send you a daily digest of new neuroscience papers picked for your interests.
 
-/digest: today's papers, now
+/digest: today's papers, now (tap ➡️ under them for more)
 /find <i>topic</i>: search recent papers
 /saved: papers you saved
 /follow <i>name</i>: a message when an author publishes (/following, /unfollow)
-/topics, /keywords, /time, /settings: what you get, and when
+/topics, /keywords, /sources, /time, /settings: what you get, and when
 /privacy: what I keep · /stop: delete it all
 
 Paste a DOI or a bioRxiv link and I'll summarize the paper in plain language."""
 
-PRIVACY = """What I keep about you: your Telegram name and ID; the topics, keywords, time zone and hour you gave me; which papers I sent you; and your 👍/👎, saved papers and followed authors.
+PRIVACY = """What I keep about you: your Telegram name and ID; the topics, keywords, sources, time zone and hour you gave me; which papers I sent you; and your 👍/👎, saved papers and followed authors.
 
-It's only used to pick your papers. It stays in the bot's own database and isn't shared. /stop deletes all of it."""
+It's only used to pick your papers. It stays in the bot's own database and isn't shared. Journals you add are offered to everyone, without your name. /stop deletes all of it."""
+
+SOURCES = """📚 <b>Where your papers come from</b>
+
+Tap the sources you want (tap again to remove). Papers from yours come first, and a great match from elsewhere can still show up. From general journals like Nature or eLife, you only get the brain papers.
+
+Missing a journal? Tap <b>➕ Add a journal</b>."""
 
 
 def button(text, data):
@@ -88,6 +98,25 @@ def in_rows(buttons, per_row):
     return [buttons[i : i + per_row] for i in range(0, len(buttons), per_row)]
 
 
+def pair_up(items, short=19):
+    """(label, data, name) items as buttons: two to a row when both names are short, else one.
+    The name leaves out the ✅, so a row doesn't change shape when one is ticked."""
+    rows, i = [], 0
+    while i < len(items):
+        if i + 1 < len(items) and len(items[i][2]) <= short and len(items[i + 1][2]) <= short:
+            rows.append([button(*items[i][:2]), button(*items[i + 1][:2])])
+            i += 2
+        else:
+            rows.append([button(*items[i][:2])])
+            i += 1
+    return rows
+
+
+def per_month(n):
+    n = round(n)
+    return "fewer than one paper a month" if n < 1 else f"about {n} paper{'' if n == 1 else 's'} a month"
+
+
 class Bot:
     def __init__(self, cfg, store, client):
         self.cfg, self.store, self.client = cfg, store, client
@@ -95,8 +124,10 @@ class Bot:
         self.admin = int(tg.chat_id())
         self.models = gemini_models(cfg)
         self.embedding_model = digest.embedding_model(cfg)
-        self.updating = None  # the daily update's thread, while it runs
+        self.updating = None  # the update's thread, while it runs
         self.update_tried_at = None  # kept in memory, so a restart tries again straight away
+        self.pending_sources = set()  # sources someone just turned on that nobody had: fetched at the next tick
+        self.found = {}  # each person's latest journal search, by button ID
 
     def say(self, uid, text, buttons=None):
         return tg.send(uid, text, buttons)
@@ -134,6 +165,8 @@ class Bot:
             return self.command(user, command.split("@")[0].lower(), arg.strip())
         if user["step"] in ("keywords", "keywords_edit"):
             return self.set_keywords(user, text)
+        if user["step"] in ("journal", "journal_edit"):
+            return self.find_journal(user, text)
         doi = find_doi(text)
         if doi:
             return self.summarize_doi(user, doi)
@@ -163,12 +196,16 @@ class Bot:
 
     def command(self, user, cmd, arg):
         uid = user["id"]
+        if user["step"] in ("keywords_edit", "journal_edit"):  # a command means they're not answering my question
+            self.store.update_user(uid, step=None)
+            user = self.store.user(uid)
         if cmd in ("/start", "/help"):
             return self.resume_setup(user) if user["step"] else self.say(uid, HELP)
         commands = {
             "/digest": lambda: self.send_digest(user, manual=True),
             "/topics": lambda: self.ask_topics(user),
             "/keywords": lambda: self.set_keywords(user, arg) if arg else self.ask_keywords(user, editing=True),
+            "/sources": lambda: self.ask_sources(user),
             "/time": lambda: self.ask_tz(user),
             "/tz": lambda: self.set_tz(user, arg),
             "/settings": lambda: self.ask_count(user),
@@ -201,9 +238,15 @@ class Bot:
                     "topic": lambda: self.toggle_topic(user, value, message_id),
                     "topics_done": lambda: self.topics_done(user, message_id),
                     "keep_keywords": lambda: self.set_keywords(user, ""),
+                    "src": lambda: self.toggle_source(user, value, message_id),
+                    "src_add": lambda: self.ask_journal(user, message_id),
+                    "src_pick": lambda: self.add_journal(user, value, message_id),
+                    "src_cancel": lambda: self.cancel_journal(user, message_id),
+                    "src_done": lambda: self.sources_done(user, message_id),
                     "tz": lambda: self.set_tz(user, ZONES[int(value)][1]),
                     "hour": lambda: self.set_hour(user, int(value)),
                     "count": lambda: self.set_count(user, int(value)),
+                    "more": lambda: self.more(user, message_id),
                     "like": lambda: self.react(user, value, 1, message_id),
                     "dislike": lambda: self.react(user, value, -1, message_id),
                     "save": lambda: self.save(user, value, message_id),
@@ -232,14 +275,23 @@ class Bot:
             tg.edit(self.admin, message_id, f"{'✅ Approved' if approve else '❌ Denied'}: {html.escape(user['name'] or str(uid))}")
         return "Approved" if approve else "Denied"
 
-    # ---------- setup: topics, keywords, time zone, hour ----------
+    # ---------- setup: topics, keywords, sources, time zone, hour ----------
     def start_setup(self, user):
         self.store.update_user(user["id"], step="topics")
         self.say(user["id"], "Let's set up your digest. First, the areas you follow:")
         self.ask_topics(self.store.user(user["id"]))
 
     def resume_setup(self, user):
-        ask = {"topics": self.ask_topics, "keywords": self.ask_keywords, "tz": self.ask_tz, "hour": self.ask_hour}
+        if user["step"] == "journal":  # back to the list
+            self.store.update_user(user["id"], step="sources")
+            user = self.store.user(user["id"])
+        ask = {
+            "topics": self.ask_topics,
+            "keywords": self.ask_keywords,
+            "sources": self.ask_sources,
+            "tz": self.ask_tz,
+            "hour": self.ask_hour,
+        }
         ask.get(user["step"], lambda u: self.say(u["id"], HELP))(user)
 
     def topic_buttons(self, chosen):
@@ -286,9 +338,9 @@ class Bot:
         uid, step = user["id"], user["step"]
         if text:
             self.store.update_user(uid, keywords=text[:500])
-        if step == "keywords":  # part of setup: on to the time zone
-            self.store.update_user(uid, step="tz")
-            self.ask_tz(self.store.user(uid))
+        if step == "keywords":  # part of setup: on to the sources
+            self.store.update_user(uid, step="sources")
+            self.ask_sources(self.store.user(uid))
         elif step == "keywords_edit" or text:
             if step == "keywords_edit":
                 self.store.update_user(uid, step=None)
@@ -296,6 +348,156 @@ class Bot:
                 self.refresh_profile(self.store.user(uid))
                 self.say(uid, "Keywords saved.")
         return None
+
+    def my_sources(self, user):
+        """The keys of the sources this person ticked (none to start with)."""
+        return list(user["sources"] or [])
+
+    def source_buttons(self, user):
+        mine = set(self.my_sources(user))
+        items = [
+            (("✅ " if s["key"] in mine else "") + s["name"], f"src:{s['id']}", s["name"])
+            for s in catalog.sources(self.cfg, self.store)
+        ]
+        return pair_up(items) + [[button("➕ Add a journal", "src_add"), button("Done", "src_done")]]
+
+    def ask_sources(self, user):
+        self.say(user["id"], SOURCES, self.source_buttons(user))
+
+    def toggle_source(self, user, sid, message_id):
+        source = next((s for s in catalog.sources(self.cfg, self.store) if s["id"] == sid), None)
+        if not source:
+            return "That source is gone"
+        mine = self.my_sources(user)
+        if source["key"] in mine:
+            mine.remove(source["key"])
+        else:
+            self.fetch_soon(source["key"])
+            mine.append(source["key"])
+        self.store.update_user(user["id"], sources=mine)
+        if message_id:
+            tg.edit_markup(user["id"], message_id, self.source_buttons(self.store.user(user["id"])))
+        return ("On: " if source["key"] in mine else "Off: ") + source["name"]
+
+    def fetch_soon(self, key):
+        """A source nobody had on gets its recent papers fetched now, not at the next daily update."""
+        if key not in digest.wanted_sources(self.store, self.cfg):
+            self.pending_sources.add(key)
+
+    def sources_done(self, user, message_id):
+        uid, n = user["id"], len(self.my_sources(user))
+        if message_id:
+            tg.edit_markup(uid, message_id, [])
+        if not n:
+            self.say(uid, "No sources picked, so your papers come from everything I follow. Pick some anytime with /sources.")
+        if user["step"] == "sources":  # part of setup: on to the time zone
+            self.store.update_user(uid, step="tz")
+            self.ask_tz(self.store.user(uid))
+        elif n:
+            self.say(uid, f"Saved: {n} source{'' if n == 1 else 's'}. They count from your next digest.")
+        return "Saved"
+
+    def ask_journal(self, user, message_id):
+        if user["step"] in ("sources", "journal"):
+            step = "journal"
+        elif user["step"] in (None, "keywords_edit", "journal_edit"):
+            step = "journal_edit"
+        else:
+            return "Finish setting up first"
+        if message_id:
+            tg.edit_markup(user["id"], message_id, [])  # the list comes back afterwards
+        self.store.update_user(user["id"], step=step)
+        self.say(
+            user["id"],
+            "Which journal? Send its name, its abbreviation (like <i>J Neurosci</i>) or its ISSN.",
+            [[button("Cancel", "src_cancel")]],
+        )
+        return None
+
+    def find_journal(self, user, text):
+        uid = user["id"]
+        cancel = [[button("Cancel", "src_cancel")]]
+        if not self.allowed(user, "journal", self.settings["searches_per_day"]):
+            return self.say(uid, "That's all the journal searches for today. More tomorrow!", cancel)
+        tg.typing(uid)
+        try:
+            found = catalog.find_journals(text)
+        except Exception as exc:
+            log.warning("Journal search for %r failed: %s", text, describe(exc))
+            return self.say(uid, "PubMed didn't answer just now. Please try again in a minute.", cancel)
+        if not found:
+            return self.say(
+                uid,
+                f"I couldn't find <i>{html.escape(text[:100])}</i> in PubMed. Try its full name, its abbreviation "
+                "as PubMed writes it (like <i>J Neurosci</i>) or its ISSN.",
+                cancel,
+            )
+        self.found[uid] = {catalog.make("pubmed", j["abbr"], "")["id"]: j for j in found}
+        lines = [
+            f"{i}. <b>{html.escape(j['title'])}</b> ({html.escape(j['abbr'])}), {per_month(j['per_month'])}"
+            for i, j in enumerate(found, 1)
+        ]
+        if len(found) == 1:
+            buttons = [[button(f"Add {found[0]['abbr']}", f"src_pick:{next(iter(self.found[uid]))}")]]
+        else:
+            buttons = [[button(f"{i}. {j['abbr']}", f"src_pick:{sid}")] for i, (sid, j) in enumerate(self.found[uid].items(), 1)]
+        question = "Is this the one?" if len(found) == 1 else "Which one?"
+        self.say(uid, question + "\n\n" + "\n".join(lines), buttons + cancel)
+
+    def add_journal(self, user, sid, message_id):
+        uid = user["id"]
+        found = self.found.get(uid, {}).get(sid)
+        if not found:
+            return "That list is old: send the journal's name again"
+        key = catalog.key_for("pubmed", found["abbr"])
+        source = next((s for s in catalog.sources(self.cfg, self.store) if s["key"] == key), None)
+        note = ""
+        if source is None:  # new to the bot: check it, then offer it to everyone
+            tg.typing(uid)
+            try:
+                details = catalog.journal_details(found["abbr"])
+            except Exception as exc:
+                log.warning("Couldn't check %s: %s", found["abbr"], describe(exc))
+                return "PubMed didn't answer: try again in a minute"
+            name = html.escape(found["title"])
+            if not details:
+                self.say(uid, f"PubMed has nothing from <b>{name}</b> in the past year, so I can't follow it.")
+                return None
+            volume = details["brain_per_month"] if details["broad"] else details["per_month"]
+            if volume > catalog.MAX_PER_MONTH:
+                self.say(uid, f"<b>{name}</b> publishes too much for me to follow ({per_month(volume)}).")
+                return None
+            name = catalog.display_name(found["title"], found["abbr"])
+            source = catalog.make("pubmed", found["abbr"], name, broad=details["broad"], added=True)
+            self.store.add_source(source)
+            if details["broad"]:
+                note = f" It covers more than neuroscience, so you'll only get its brain papers ({per_month(volume)})."
+        if message_id:
+            tg.edit_markup(uid, message_id, [])
+        mine = self.my_sources(user)
+        if key in mine:
+            text = f"You already get <b>{html.escape(source['name'])}</b>."
+        else:
+            self.fetch_soon(key)
+            self.store.update_user(uid, sources=mine + [key])
+            text = f"Added <b>{html.escape(source['name'])}</b>.{note} Its papers count from your next digest."
+        self.found.pop(uid, None)
+        self.leave_journal_step(user)
+        self.say(uid, text)
+        self.ask_sources(self.store.user(uid))
+        return "Added"
+
+    def cancel_journal(self, user, message_id):
+        if message_id:
+            tg.edit_markup(user["id"], message_id, [])
+        self.found.pop(user["id"], None)
+        self.leave_journal_step(user)
+        self.ask_sources(self.store.user(user["id"]))
+        return "Cancelled"
+
+    def leave_journal_step(self, user):
+        if user["step"] in ("journal", "journal_edit"):
+            self.store.update_user(user["id"], step="sources" if user["step"] == "journal" else None)
 
     def ask_tz(self, user):
         buttons = [button(label, f"tz:{i}") for i, (label, _) in enumerate(ZONES)]
@@ -361,14 +563,33 @@ class Bot:
             return
         local = self.local_now(user, now)
         self.store.update_user(uid, last_digest=local.date().isoformat())
+        if not self.send_papers(user, "digest", f"☀️ <b>Your papers for {local:%A}, {local.day} {local:%B}</b>"):
+            self.say(uid, "No new papers for you today. Try /find, or add /topics or /sources.")
+
+    def send_papers(self, user, kind, header=None):
+        """This person's next best papers, then a ➡️ button if more are waiting. Returns how many it sent."""
         n = user["per_digest"] or self.settings["papers_per_digest"]
-        papers = digest.pick(self.store, user, n, self.settings["recent_days"])
-        if not papers:
-            self.say(uid, "No new papers for you today. Try /find, or add /topics.")
-            return
-        self.say(uid, f"☀️ <b>Your papers for {local:%A}, {local.day} {local:%B}</b>")
-        for p in papers:
-            self.send_card(user, p, "digest")
+        papers = digest.pick(self.store, user, n + 1, self.settings["recent_days"], self.my_sources(user))
+        if papers and header:
+            self.say(user["id"], header)
+        for p in papers[:n]:
+            self.send_card(user, p, kind)
+        if len(papers) > n:
+            self.say(user["id"], "Want more?", [[button(f"➡️ {n} more", "more")]])
+        return len(papers[:n])
+
+    def more(self, user, message_id):
+        uid = user["id"]
+        if not self.allowed(user, "more", self.settings["more_per_day"]):
+            if message_id:
+                tg.edit(uid, message_id, "That's all for today. More tomorrow!")
+            return "That's all for today"
+        n = user["per_digest"] or self.settings["papers_per_digest"]
+        if message_id:
+            tg.edit(uid, message_id, f"➡️ {n} more:")  # the button goes, and the message heads the next papers
+        if not self.send_papers(user, "more"):
+            self.say(uid, "That's every new paper from the past week. More tomorrow!")
+        return None
 
     def with_hook(self, p):
         """The paper, with its hook written (and saved) if it doesn't have one yet."""
@@ -472,10 +693,11 @@ class Bot:
         paper = self.store.paper_by_doi(doi)
         if not paper:
             tg.typing(uid)
-            found = lookup(doi, self.cfg["sources"].get("pubmed", {}).get("journals", {}))
+            journals = {s["query"]: s["name"] for s in catalog.sources(self.cfg, self.store) if s["kind"] == "pubmed"}
+            found = lookup(doi, journals)
             if not found:
                 return self.say(uid, f"I couldn't find a paper with the DOI <code>{html.escape(doi)}</code>.")
-            self.store.add_paper(found)
+            self.store.add_paper(found, hidden=True)  # summarized on request: not one of the week's new papers
             paper = self.store.paper_by_doi(found["doi"])
         return self.summarize(user, paper)
 
@@ -588,7 +810,7 @@ class Bot:
         if not self.store.get("last_update"):
             return
         for user in self.store.users("active"):
-            if user["step"] or user["tz"] is None or user["hour"] is None:
+            if user["step"] in SETUP_STEPS or user["tz"] is None or user["hour"] is None:
                 continue  # still setting up
             local = self.local_now(user, now)
             if local.hour >= user["hour"] and user["last_digest"] != local.date().isoformat():
@@ -602,18 +824,27 @@ class Bot:
             return
         last = self.store.get("last_update")
         if last == now.date().isoformat() or (last and now.hour < self.settings["update_hour_utc"]):
-            return  # done today, or not time yet (the very first update runs right away)
+            # Done today, or not time yet (the very first update runs right away). Meanwhile, a source
+            # someone just turned on gets its papers now.
+            if self.pending_sources and last:
+                only, self.pending_sources = set(self.pending_sources), set()
+                self.start_update(only)
+            return
         if self.update_tried_at and now - self.update_tried_at < timedelta(minutes=30):
             return  # the last try failed recently: wait a little
         self.update_tried_at = now
-        self.updating = threading.Thread(target=self.run_update, name="daily-update", daemon=True)
+        self.pending_sources.clear()  # the daily update fetches them too
+        self.start_update(None)
+
+    def start_update(self, only):
+        self.updating = threading.Thread(target=self.run_update, args=(only,), name="update", daemon=True)
         self.updating.start()
 
-    def run_update(self):
+    def run_update(self, only=None):
         try:
-            digest.daily_update(self.store, self.cfg, self.client, alert=self.send_alert)
+            digest.daily_update(self.store, self.cfg, self.client, alert=self.send_alert, only=only)
         except Exception:
-            log.exception("The daily update failed; it'll try again in 30 minutes")
+            log.exception("The update failed%s", "" if only else "; it'll try again in 30 minutes")
 
 
 def main():

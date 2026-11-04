@@ -28,6 +28,38 @@
       "email": ""
     }
   },
+  "more_sources": {
+    "preprints": {
+      "biorxiv:animal behavior and cognition": "bioRxiv · Behavior",
+      "medrxiv:neurology": "medRxiv · Neurology",
+      "medrxiv:psychiatry and clinical psychology": "medRxiv · Psychiatry"
+    },
+    "journals": {
+      "Brain": "Brain",
+      "Cereb Cortex": "Cerebral Cortex",
+      "eNeuro": "eNeuro",
+      "Neuroimage": "NeuroImage",
+      "J Neurophysiol": "Journal of Neurophysiology",
+      "J Cogn Neurosci": "Journal of Cognitive Neuroscience",
+      "Biol Psychiatry": "Biological Psychiatry",
+      "Mol Psychiatry": "Molecular Psychiatry",
+      "Ann Neurol": "Annals of Neurology"
+    },
+    "general_journals": {
+      "Nature": "Nature",
+      "Science": "Science",
+      "Cell": "Cell",
+      "Elife": "eLife",
+      "Proc Natl Acad Sci U S A": "PNAS",
+      "Curr Biol": "Current Biology",
+      "Cell Rep": "Cell Reports",
+      "Nat Commun": "Nature Communications",
+      "Sci Adv": "Science Advances",
+      "PLoS Biol": "PLOS Biology",
+      "PLoS Comput Biol": "PLOS Computational Biology",
+      "Nat Hum Behav": "Nature Human Behaviour"
+    }
+  },
   "selection": {
     "lookback_days": 4,
     "daily_picks": {
@@ -62,7 +94,8 @@
     "keep_days": 60,
     "summaries_per_day": 10,
     "searches_per_day": 30,
-    "follows_per_person": 20
+    "follows_per_person": 20,
+    "more_per_day": 5
   },
   "topics": {
     "memory": ["Learning & memory", "learning and memory, hippocampus, synaptic plasticity, memory consolidation and replay"],

@@ -1,5 +1,5 @@
-"""The public bot's database: who uses it, the papers it knows, and what each person was sent,
-liked, saved and follows.
+"""The public bot's database: who uses it, the papers it knows, what each person was sent, liked,
+saved and follows, and the journals people added.
 
 It's one SQLite file, data/db/bot.db, kept out of git because it holds people's Telegram IDs and
 interests. /stop deletes everything about a person.
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     tz TEXT,
     hour INTEGER,
     per_digest INTEGER,
+    sources TEXT,                    -- the sources they ticked (JSON list of keys); NULL until they tick one
     profile BLOB,                    -- a fingerprint per topic and keyword phrase
     last_digest TEXT,                -- their local date of the last digest
     created_at TEXT NOT NULL
@@ -40,7 +41,9 @@ CREATE TABLE IF NOT EXISTS papers (
     date TEXT, link TEXT, abstract TEXT, license TEXT,
     quality INTEGER, reason TEXT, hook TEXT, summary TEXT,
     vector BLOB,
-    added_at TEXT NOT NULL
+    added_at TEXT NOT NULL,
+    src TEXT,                        -- the source it came from, like "pubmed:neuron" (see catalog.py)
+    hidden INTEGER NOT NULL DEFAULT 0  -- 1: never in digests or searches (looked up by DOI, or off topic)
 );
 CREATE TABLE IF NOT EXISTS sent (
     user_id INTEGER NOT NULL, pid TEXT NOT NULL, kind TEXT NOT NULL, message_id INTEGER,
@@ -57,14 +60,24 @@ CREATE TABLE IF NOT EXISTS usage (
     user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL,
     PRIMARY KEY (user_id, day, kind)
 );
+CREATE TABLE IF NOT EXISTS sources (   -- journals people added with /sources, offered to everyone
+    key TEXT PRIMARY KEY, kind TEXT NOT NULL, query TEXT NOT NULL, name TEXT NOT NULL,
+    broad INTEGER NOT NULL DEFAULT 0, added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS vectors (key TEXT PRIMARY KEY, vector BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
+ADDED_COLUMNS = [  # columns that came later, added to older databases when the bot starts
+    ("users", "sources", "TEXT"),
+    ("papers", "src", "TEXT"),
+    ("papers", "hidden", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 def _user(row):
     user = dict(row)
     user["topics"] = json.loads(user["topics"])
+    user["sources"] = None if user["sources"] is None else json.loads(user["sources"])
     user["profile"] = unpack(user["profile"])
     return user
 
@@ -84,6 +97,9 @@ class Store:
         self.path = str(path)
         self._local = threading.local()  # one connection per thread: the daily update runs in its own
         self.db.executescript(SCHEMA)
+        for table, column, kind in ADDED_COLUMNS:
+            if column not in {row[1] for row in self.run(f"PRAGMA table_info({table})")}:
+                self.run(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
     @property
     def db(self):
@@ -132,8 +148,9 @@ class Store:
         )
 
     def update_user(self, uid, **fields):
-        if "topics" in fields:
-            fields["topics"] = json.dumps(fields["topics"])
+        for name in ("topics", "sources"):
+            if fields.get(name) is not None:
+                fields[name] = json.dumps(fields[name])
         if fields.get("profile") is not None:
             fields["profile"] = pack(fields["profile"])
         sets = ", ".join(f"{name}=?" for name in fields)
@@ -153,14 +170,15 @@ class Store:
     def has_paper(self, doi):
         return self.run("SELECT 1 FROM papers WHERE doi=?", doi.lower()).fetchone() is not None
 
-    def add_paper(self, p, vector=None, quality=None, reason=None):
+    def add_paper(self, p, vector=None, quality=None, reason=None, hidden=False):
         pid = short_id(p["doi"])
         self.run(
-            "INSERT OR IGNORE INTO papers(pid, doi, source, venue, title, authors, author_keys, date, link, abstract,"
-            " license, quality, reason, vector, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            pid, p["doi"].lower(), p.get("source"), p.get("venue"), p["title"], json.dumps(p.get("authors") or []),
-            json.dumps(p.get("author_keys") or []), p.get("date"), p.get("link"), p.get("abstract"), p.get("license"),
-            quality, reason, None if vector is None else pack(vector), iso(),
+            "INSERT OR IGNORE INTO papers(pid, doi, source, venue, src, title, authors, author_keys, date, link, abstract,"
+            " license, quality, reason, hidden, vector, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            pid, p["doi"].lower(), p.get("source"), p.get("venue"), p.get("src"), p["title"],
+            json.dumps(p.get("authors") or []), json.dumps(p.get("author_keys") or []), p.get("date"), p.get("link"),
+            p.get("abstract"), p.get("license"), quality, reason, int(bool(hidden)),
+            None if vector is None else pack(vector), iso(),
         )
         return pid
 
@@ -176,10 +194,18 @@ class Store:
         sets = ", ".join(f"{name}=?" for name in fields)
         self.run(f"UPDATE papers SET {sets} WHERE pid=?", *fields.values(), pid)
 
+    def set_vector(self, pid, vector):
+        self.run("UPDATE papers SET vector=? WHERE pid=?", pack(vector), pid)
+
+    def unembedded(self):
+        """Papers waiting for their fingerprint."""
+        return [_paper(r) for r in self.run("SELECT * FROM papers WHERE vector IS NULL AND hidden=0 ORDER BY added_at")]
+
     def recent(self, days):
         """Papers added in the last `days` days that have a fingerprint."""
         since = iso(now_utc() - timedelta(days=days))
-        return [_paper(r) for r in self.run("SELECT * FROM papers WHERE added_at>=? AND vector IS NOT NULL", since)]
+        rows = self.run("SELECT * FROM papers WHERE added_at>=? AND vector IS NOT NULL AND hidden=0", since)
+        return [_paper(r) for r in rows]
 
     def prune(self, days):
         """Forget papers older than `days` days, except ones someone saved."""
@@ -243,3 +269,26 @@ class Store:
 
     def followers(self, key):
         return [(r[0], r[1]) for r in self.run("SELECT user_id, label FROM follows WHERE author_key=?", key)]
+
+    # ---------- sources ----------
+    def chosen_sources(self):
+        """Every source at least one active person has ticked."""
+        keys = set()
+        for (value,) in self.run("SELECT sources FROM users WHERE status='active' AND sources IS NOT NULL"):
+            keys.update(json.loads(value))
+        return keys
+
+    def added_sources(self):
+        return [dict(r) for r in self.run("SELECT * FROM sources ORDER BY added_at")]
+
+    def add_source(self, s):
+        self.run(
+            "INSERT OR IGNORE INTO sources(key, kind, query, name, broad, added_at) VALUES (?, ?, ?, ?, ?, ?)",
+            s["key"], s["kind"], s["query"], s["name"], int(s["broad"]), iso(),
+        )
+
+    def drop_sources(self, keep):
+        """Forget added journals that nobody has on any more."""
+        for row in self.added_sources():
+            if row["key"] not in keep:
+                self.run("DELETE FROM sources WHERE key=?", row["key"])

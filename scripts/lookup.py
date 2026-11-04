@@ -1,26 +1,27 @@
 """Find a paper from a DOI or link someone pastes, for summaries on demand.
 
-Tries bioRxiv (for its DOIs), then PubMed, then Crossref, which knows nearly every DOI but often
-has no abstract.
+Tries bioRxiv and medRxiv (for their DOIs), then PubMed, then Crossref, which knows nearly every
+DOI but often has no abstract.
 """
+import os
 import re
 import xml.etree.ElementTree as ET
 
 from common import clean_text, name_key
-from fetch_papers import EUTILS, TIMEOUT, biorxiv_record, pubmed_paper, session
+from fetch_papers import PREPRINTS, TIMEOUT, biorxiv_record, eutils, pubmed_paper, session
 
 DOI = re.compile(r"10\.\d{4,9}/[^\s\"<>]+", re.IGNORECASE)
 BIORXIV_PREFIXES = ("10.1101/", "10.64898/")
 
 
 def find_doi(text):
-    """The first DOI in text, which can be a bare DOI, a doi.org link or a bioRxiv link."""
+    """The first DOI in text, which can be a bare DOI, a doi.org link or a bioRxiv or medRxiv link."""
     match = DOI.search(text or "")
     if not match:
         return None
     doi = match.group(0).rstrip(".,;:)]}>'\"")
     if doi.startswith(BIORXIV_PREFIXES):
-        doi = re.sub(r"v\d+(\.full(\.pdf)?)?$", "", doi)  # bioRxiv links end in a version, like v2.full
+        doi = re.sub(r"v\d+(\.full(\.pdf)?)?$", "", doi)  # their links end in a version, like v2.full
     return doi
 
 
@@ -39,18 +40,19 @@ def lookup(doi, journals):
 def from_biorxiv(doi, journals):
     if not doi.startswith(BIORXIV_PREFIXES):
         return None
-    rows = session.get(f"https://api.biorxiv.org/details/biorxiv/{doi}", timeout=TIMEOUT).json().get("collection") or []
-    return biorxiv_record(rows[-1]) if rows else None  # the latest version
+    for server in PREPRINTS:  # medRxiv DOIs look just like bioRxiv's
+        rows = session.get(f"https://api.biorxiv.org/details/{server}/{doi}", timeout=TIMEOUT).json().get("collection") or []
+        if rows:
+            return biorxiv_record(rows[-1], server)  # the latest version
+    return None
 
 
 def from_pubmed(doi, journals):
-    params = {"db": "pubmed", "tool": "neuropaperbot"}
-    found = session.get(
-        f"{EUTILS}/esearch.fcgi", params={**params, "term": f"{doi}[doi]", "retmode": "json"}, timeout=TIMEOUT
-    ).json()["esearchresult"]["idlist"]
+    api_key = os.getenv("NCBI_API_KEY")
+    found = eutils("esearch.fcgi", api_key, db="pubmed", term=f"{doi}[doi]", retmode="json").json()["esearchresult"]["idlist"]
     if not found:
         return None
-    xml = session.get(f"{EUTILS}/efetch.fcgi", params={**params, "id": found[0], "retmode": "xml"}, timeout=TIMEOUT).content
+    xml = eutils("efetch.fcgi", api_key, db="pubmed", id=found[0], retmode="xml").content
     names = {abbr.lower(): name for abbr, name in journals.items()}
     for article in ET.fromstring(xml).iter("PubmedArticle"):
         return pubmed_paper(article, names, set())

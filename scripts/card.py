@@ -116,7 +116,7 @@ def make_card(d, name):
         who += "  ·  "
         draw.text((x, y), who, font=meta, fill=MUTED, anchor="ls")
         x += draw.textlength(who, font=meta)
-    venue_color = PREPRINT if d.get("source") == "biorxiv" else ACCENT
+    venue_color = PREPRINT if d.get("source") in ("biorxiv", "medrxiv") else ACCENT
     draw.text((x, y), d.get("venue") or "", font=meta, fill=venue_color, anchor="ls")
 
     # As much of the abstract as fits above the footer, up to four lines.
