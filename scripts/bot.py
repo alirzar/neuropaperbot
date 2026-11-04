@@ -85,7 +85,7 @@ It's only used to pick your papers. It stays in the bot's own database and isn't
 
 SOURCES = """📚 <b>Where your papers come from</b>
 
-Tap the sources you want (tap again to remove). Papers from yours come first, and a great match from elsewhere can still show up. From general journals like Nature or eLife, you only get the brain papers.
+Tap the sources you want (tap again to remove). Your digest starts with their papers, best match first; when those run out, the best matches from everywhere else follow. From general journals like Nature or eLife, you only get the brain papers.
 
 Missing a journal? Tap <b>➕ Add a journal</b>."""
 

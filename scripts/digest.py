@@ -1,9 +1,10 @@
 """Papers for the public bot: the daily update, choosing each person's papers, search, and author alerts.
 
 Each paper and each interest gets a topic fingerprint (see vectors.py). A person's papers are the
-week's newest ones that best match any of their interests, nudged toward papers like the ones
-they gave 👍 and away from the 👎 ones, toward the sources they chose, and a little toward
-Gemini's quality score.
+week's new ones from the sources they ticked, best match first, and then, once those run out, the
+best matches from everywhere else. A match is how close a paper is to any of their interests, nudged
+toward papers like the ones they gave 👍 and away from the 👎 ones, and a little toward Gemini's
+quality score.
 """
 import logging
 import os
@@ -22,7 +23,6 @@ log = logging.getLogger("bot")
 
 FEEDBACK_WEIGHT = 0.2  # how much 👍 and 👎 move a score (scores are similarities, mostly 0.5 to 0.9)
 QUALITY_WEIGHT = 0.02  # per point of Gemini's 1-10 score away from 5
-SOURCE_WEIGHT = 0.05  # for papers from a person's own sources: about one spread of match scores
 
 TOPIC_CHECK = (
     '\n\nALSO: give each object a fourth field, "neuro": true if the paper is neuroscience, meaning it studies the '
@@ -57,15 +57,15 @@ def wanted_sources(store, cfg):
 def daily_update(store, cfg, client, alert=None, only=None):
     """Fetch new papers, score and fingerprint them, and call alert(uid, pid, label) for followed authors.
 
-    It fetches the base sources and every one someone has ticked. With `only` (a set of source keys)
-    it fetches just those, over the last bot.recent_days days: for a source someone just turned on.
+    It fetches the base sources and every one someone has ticked, over the last bot.recent_days days,
+    so every paper that can go in a digest is there. With `only` (a set of source keys) it fetches
+    just those: for a source someone just ticked.
     """
     today = now_utc().date()
     settings = cfg.get("bot", {})
     everything = catalog.sources(cfg, store)
     wanted = set(only) if only else wanted_sources(store, cfg)
-    days = settings.get("recent_days", 7) if only else cfg["selection"].get("lookback_days", 4)
-    start = today - timedelta(days=days)
+    start = today - timedelta(days=settings.get("recent_days", 7))
     pubmed = cfg["sources"].get("pubmed", {})
     papers, errors = fetch_sources([s for s in everything if s["key"] in wanted], start, today, pubmed)
 
@@ -124,8 +124,8 @@ def daily_update(store, cfg, client, alert=None, only=None):
     return {"fetched": len(unique), "new": len(new), "off_topic": off_topic, "errors": errors}
 
 
-def scores_for(store, user, papers, mine=()):
-    """How well each paper suits this person (higher is better); mine is the keys of their sources."""
+def scores_for(store, user, papers):
+    """How well each paper matches this person (higher is better)."""
     matrix = np.vstack([p["vector"] for p in papers])
     quality = np.array([p["quality"] or 5 for p in papers], dtype=np.float32)
     if user["profile"] is None:  # no topics or keywords: the best papers overall
@@ -137,17 +137,18 @@ def scores_for(store, user, papers, mine=()):
         score += FEEDBACK_WEIGHT * (matrix @ liked.T).max(axis=1)
     if disliked is not None:
         score -= FEEDBACK_WEIGHT * (matrix @ disliked.T).max(axis=1)
-    score += SOURCE_WEIGHT * np.array([p.get("src") in mine for p in papers], dtype=np.float32)
     return score + QUALITY_WEIGHT * (quality - 5)
 
 
 def pick(store, user, n, days, mine=()):
-    """The n best papers from the last `days` days that this person hasn't been sent yet."""
+    """The n papers from the last `days` days this person hasn't been sent yet: ones from their own
+    sources (mine, a list of source keys) first, best match first, then the best of the rest."""
     already = store.sent_pids(user["id"])
     papers = [p for p in store.recent(days) if p["pid"] not in already]
     if not papers:
         return []
-    order = np.argsort(-scores_for(store, user, papers, set(mine)), kind="stable")
+    scores, mine = scores_for(store, user, papers), set(mine)
+    order = sorted(range(len(papers)), key=lambda i: (papers[i].get("src") not in mine, -scores[i]))
     return [papers[i] for i in order[:n]]
 
 
