@@ -58,7 +58,7 @@ DEFAULTS = {  # overridden by the "bot" section of config.json
     "watches_per_person": 10,
     "more_per_day": 5,
 }
-SETUP_STEPS = ("topics", "keywords", "sources", "journal", "tz", "hour", "days", "confirm", "keywords_review", "journal_review")
+SETUP_STEPS = ("topics", "keywords", "sources", "journal", "tz", "hour", "days", "count", "confirm", "keywords_review", "journal_review")
 REVIEW_STEPS = ("keywords_review", "journal_review")  # answering a question asked from the summary, in setup
 
 ZONES = [
@@ -77,7 +77,7 @@ ZONES = [
     ("UTC", "UTC"),
 ]
 HOURS = [6, 7, 8, 9, 10, 12, 14, 17, 20]
-COUNTS = [1, 3, 5, 8]
+COUNTS = list(range(1, 11))  # papers per digest people can pick
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python's weekday() order
 EVERY_DAY, WEEKDAYS = list(range(7)), list(range(5))
 
@@ -382,6 +382,7 @@ class Bot:
             "dislike": lambda: self.react(user, value, -1, message_id),
             "save": lambda: self.save(user, value, message_id),
             "sum": lambda: self.summarize_pid(user, value),
+            "abs": lambda: self.abstract(user, value),
             "copy": lambda: self.copy(user, value),
             "li": lambda: self.linkedin(user, value),
             "near": lambda: self.similar(user, value),
@@ -423,6 +424,7 @@ class Bot:
             "tz": self.ask_tz,
             "hour": self.ask_hour,
             "days": self.ask_days,
+            "count": self.ask_count,
             "confirm": self.show_summary,
         }
         ask.get(user["step"], lambda u: self.say(u["id"], HELP))(user)
@@ -725,10 +727,9 @@ class Bot:
             return Alert("Pick at least one day")
         if message_id:
             self.edit_buttons(uid, message_id, [])
-        if user["step"] == "days":  # the last question: now the summary, to confirm
-            self.store.update_user(uid, step="confirm")
-            self.refresh_profile(self.store.user(uid))
-            self.show_summary(self.store.user(uid))
+        if user["step"] == "days":  # part of setup: on to how many papers
+            self.store.update_user(uid, step="count")
+            self.ask_count(self.store.user(uid))
         elif user["step"] == "confirm":
             self.show_summary(self.store.user(uid))
         else:
@@ -737,16 +738,26 @@ class Bot:
 
     def ask_count(self, user):
         now = user["per_digest"] or self.settings["papers_per_digest"]
-        self.say(user["id"], f"How many papers per digest? (now {now})", [[button(str(n), f"count:{n}") for n in COUNTS]])
+        buttons = [button(("✅ " if n == now else "") + str(n), f"count:{n}") for n in COUNTS]
+        self.say(
+            user["id"],
+            "How many papers would you like each time? You can always tap <b>➡️ more</b> under them for the next ones.",
+            in_rows(buttons, 5),
+        )
 
     def set_count(self, user, n):
+        uid = user["id"]
         if n is None:
             return None
-        self.store.update_user(user["id"], per_digest=n)
-        if user["step"] == "confirm":
-            self.show_summary(self.store.user(user["id"]))
+        self.store.update_user(uid, per_digest=n)
+        if user["step"] == "count":  # the last question: now the summary, to confirm
+            self.store.update_user(uid, step="confirm")
+            self.refresh_profile(self.store.user(uid))
+            self.show_summary(self.store.user(uid))
+        elif user["step"] == "confirm":
+            self.show_summary(self.store.user(uid))
         else:
-            self.say(user["id"], f"Done: {n} paper{'' if n == 1 else 's'} per digest.")
+            self.say(uid, f"Done: {n} paper{'' if n == 1 else 's'} per digest.")
         return "Saved"
 
     # ---------- the summary of someone's choices ----------
@@ -883,10 +894,11 @@ class Bot:
                 button("👎" + (" ✓" if row["feedback"] < 0 else ""), f"dislike:{pid}"),
                 button("💾 Saved" if row["saved"] else "💾 Save", f"save:{pid}"),
             ],
-            [button("📄 Summary", f"sum:{pid}"), button("📋 Copy", f"copy:{pid}"), button("🔗 Similar", f"near:{pid}")],
+            [button("📃 Abstract", f"abs:{pid}"), button("📄 Summary", f"sum:{pid}")],
+            [button("📋 Copy", f"copy:{pid}"), button("🔗 Similar", f"near:{pid}")],
         ]
         if user["is_admin"] and os.getenv("LINKEDIN_ACCESS_TOKEN"):
-            buttons[1].append(button("💼 LinkedIn", f"li:{pid}"))
+            buttons[2].append(button("💼 LinkedIn", f"li:{pid}"))
         return buttons
 
     def send_card(self, user, p, kind):
@@ -951,6 +963,19 @@ class Bot:
             for i, p in enumerate(papers, 1)
         ]
         self.say(user["id"], "💾 <b>Your saved papers</b>, newest first:\n\n" + "\n\n".join(lines))
+
+    def abstract(self, user, pid):
+        """📃 Abstract: the whole abstract as text, since the card only has room for its start."""
+        p = self.store.paper(pid)
+        if not p:
+            return Alert("That paper is gone")
+        link = html.escape(p.get("link") or "")
+        if not p.get("abstract"):
+            self.say(user["id"], f"I don't have the abstract of <b>{html.escape(p['title'])}</b>. It's at {link}")
+            return None
+        text = shorten(p["abstract"], 3600)  # a Telegram message holds 4,096 characters
+        self.say(user["id"], f"📃 <b>{html.escape(p['title'])}</b>\n\n{html.escape(text)}\n\n{link}")
+        return None
 
     def copy(self, user, pid):
         p = self.store.paper(pid)

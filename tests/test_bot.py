@@ -228,6 +228,7 @@ def setup(uid, topics, keywords, tz_tap=None, tz_cmd=None, hour=8, sources=()):
     tap(uid, f"tz:{tz_tap}") if tz_cmd is None else message(uid, f"/tz {tz_cmd}")
     tap(uid, f"hour:{hour}")
     tap(uid, "days_done")
+    tap(uid, "count:3")
     tap(uid, "go")
 
 
@@ -273,6 +274,10 @@ tap(ADMIN, "days_done", message_id=days["_id"])
 check(answers[-1] == "Pick at least one day" and store.user(ADMIN)["step"] == "days", "no days: asked to pick one")
 tap(ADMIN, "days:all", message_id=days["_id"])
 tap(ADMIN, "days_done", message_id=days["_id"])
+count = tg.to(ADMIN, "sendMessage")[-1]
+check(store.user(ADMIN)["step"] == "count" and "How many papers" in count["text"], "then: how many papers each time")
+check(buttons(count) == [["1", "2", "✅ 3", "4", "5"], ["6", "7", "8", "9", "10"]], "1 to 10, with the default ticked")
+tap(ADMIN, "count:3", message_id=count["_id"])
 check(store.user(ADMIN)["step"] == "confirm", "then a summary to confirm")
 summary = tg.to(ADMIN, "sendMessage")[-1]
 for line in ("<b>Areas:</b> Learning &amp; memory", "<b>In your words:</b> hippocampal replay, sleep",
@@ -343,7 +348,7 @@ captions = [c["caption"] for c in cards]
 check("replay during sleep" in captions[0] or "Sleep spindles" in captions[0], f"best match first: {captions[0][:60]!r}")
 check(all("Hook:" in c for c in captions), "each card has its hook")
 check(all("💡 Matches <i>" in c for c in captions), f"each card says which interest it matched: {captions[0][-60:]!r}")
-check(buttons(cards[0])[1] == ["📄 Summary", "📋 Copy", "🔗 Similar", "💼 LinkedIn"], "admin gets the LinkedIn button")
+check(buttons(cards[0])[1:] == [["📃 Abstract", "📄 Summary"], ["📋 Copy", "🔗 Similar", "💼 LinkedIn"]], "admin gets the LinkedIn button")
 footer = tg.to(ADMIN, "sendMessage")[-1]
 check(footer["text"] == "Want more?" and buttons(footer) == [["➡️ 3 more"]], "a ➡️ 3 more button after the cards")
 tap(ADMIN, "more", message_id=footer["_id"])
@@ -392,11 +397,11 @@ setup(ANA, ["affect"], None, tz_cmd="Europe/Madrid", hour=9, sources=["pubmed:na
 ana = store.user(ANA)
 check(ana["tz"] == "Europe/Madrid" and ana["step"] is None, "custom time zone with /tz")
 check(ana["sources"] == ["pubmed:nature", "pubmed:j neurosci"], f"Ana picked Nature and J Neurosci: {ana['sources']}")
-check(answers[-6:].count("On: Nature") == 1 and "On: Journal of Neuroscience" in answers[-6:], "taps answered with what changed")
+check(answers[-8:].count("On: Nature") == 1 and "On: Journal of Neuroscience" in answers[-8:], "taps answered with what changed")
 check(bot.pending_sources == {"pubmed:nature"}, "nobody had Nature: it's fetched now, not tomorrow")
 first = tg.to(ANA, "sendPhoto")
 check(len(first) == 3 and "Dopamine" in first[0]["caption"], f"reward topic -> dopamine paper first: {first[0]['caption'][:50]!r}")
-check(buttons(first[0])[1] == ["📄 Summary", "📋 Copy", "🔗 Similar"], "no LinkedIn button for others")
+check(buttons(first[0])[1:] == [["📃 Abstract", "📄 Summary"], ["📋 Copy", "🔗 Similar"]], "no LinkedIn button for others")
 message(ANA, "/tz Mars/Olympus")
 check("don't know that time zone" in tg.last(ANA), "bad time zone refused")
 
@@ -521,6 +526,18 @@ message(ADMIN, f"/summary {PAPERS[1]['doi']}")
 check("The question" in tg.last(ADMIN), "admin: no daily limit")
 tap(ANA, f"copy:{pid}")
 check("<pre>" in tg.last(ANA) and "Ready to copy" in tg.last(ANA), "copy-ready text")
+tap(ANA, f"abs:{pid}")
+dopamine = store.paper(pid)
+check(tg.last(ANA).startswith(f"📃 <b>{dopamine['title']}</b>") and dopamine["abstract"] in tg.last(ANA), "📃 Abstract: the whole abstract")
+check(not tg.to(ANA, "sendMessage")[-1].get("reply_markup"), "as plain text, no buttons")
+store.add_paper(dict(PAPERS[0], doi="10.1101/long.abstract", abstract="word " * 1200), hidden=True)
+tap(ANA, f"abs:{store.paper_by_doi('10.1101/long.abstract')['pid']}")
+check(len(tg.last(ANA)) < 4000 and "…" in tg.last(ANA), "a very long one is cut to fit a message")
+store.add_paper(dict(PAPERS[0], doi="10.1101/no.abstract", abstract=None), hidden=True)
+tap(ANA, f"abs:{store.paper_by_doi('10.1101/no.abstract')['pid']}")
+check("I don't have the abstract" in tg.last(ANA), "none: says so, with the link")
+tap(ANA, "abs:nothing123")
+check(answers[-1] == "That paper is gone", "an unknown paper")
 
 
 class LIResp:
@@ -745,13 +762,15 @@ check(store.user(ADMIN)["is_admin"] and store.user(ADMIN)["status"] == "active",
 
 print("20. buttons only do what they offer")
 carl = store.user(CARL)
-for data in ("count:100000", "count:-3", "hour:99", "hour:x", "tz:99", "tz:-1", "tz:abc", "day:9", "days:bogus"):
+for data in ("count:100000", "count:-3", "count:0", "count:11", "hour:99", "hour:x", "tz:99", "tz:-1", "tz:abc", "day:9", "days:bogus"):
     tap(CARL, data)
 after = store.user(CARL)
 check((after["per_digest"], after["hour"], after["tz"], after["days"]) == (carl["per_digest"], carl["hour"], carl["tz"], carl["days"]),
       "made-up numbers change nothing")
 tap(CARL, "count:5")
 check(store.user(CARL)["per_digest"] == 5, "while real ones still work")
+tap(CARL, "count:10")
+check(store.user(CARL)["per_digest"] == 10, "up to 10 papers")
 
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

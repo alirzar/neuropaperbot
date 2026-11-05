@@ -299,6 +299,10 @@ check(menu["custom_id"] == "pick:day:0" and all(o["default"] for o in menu["opti
 choose(DEE, days_id, "pick:day:0", [f"day:{d}" for d in range(5)])
 check(store.user(DEE)["days"] == [0, 1, 2, 3, 4], "weekends unticked in one go")
 press(DEE, "days_done", days_id)
+count_id, count, _ = dsc.last(DEE)
+check(labels(count) == [["1", "2", "✅ 3", "4", "5"], ["6", "7", "8", "9", "10"]], "papers each time: 1 to 10, as buttons")
+press(DEE, "count:3", count_id)
+check(store.user(DEE)["per_digest"] == 3 and dsc.last(DEE)[1]["content"].startswith("📋"), "3 picked: on to the summary")
 summary_id, summary, _ = dsc.last(DEE)
 check("**When:** on weekdays at 9:00, UK and Ireland time" in summary["content"], "the summary says when")
 check("📋 **Your digest**" in summary["content"] and "**Sources:** Nature Neuroscience (these come first)" in summary["content"],
@@ -315,7 +319,7 @@ mid, first, files = cards[0]
 check(files["files[0]"][0] == "card.png" and files["files[0]"][1][:4] == b"\x89PNG", "each with its card image")
 check(first["flags"] & dc.NO_EMBEDS and first["allowed_mentions"] == {"parse": []}, "no link previews, no pings")
 check("Hook:" in first["content"] and "**" in first["content"], f"caption in Markdown: {first['content'][:80]!r}")
-check(labels(first) == [["👍", "👎", "💾 Save"], ["📄 Summary", "📋 Copy", "🔗 Similar"]], "the same buttons")
+check(labels(first) == [["👍", "👎", "💾 Save"], ["📃 Abstract", "📄 Summary"], ["📋 Copy", "🔗 Similar"]], "the same buttons")
 check("💡 Matches _" in first["content"], f"and why it was picked: {first['content'][-70:]!r}")
 footer_id, footer, _ = [m for m in dsc.sent(DEE) if m[1]["content"] == "Want more?"][-1]
 check(labels(footer) == [["➡️ 3 more"]] and footer["components"][0]["components"][0]["style"] == 1, "and ➡️ 3 more")
@@ -333,6 +337,8 @@ check(dsc.messages[footer_id]["content"] == "➡️ 3 more:" and dsc.messages[fo
 check(len([1 for _, _, f in dsc.sent(DEE) if f]) == 6, "and 3 more cards come")
 press(DEE, f"copy:{pid}", mid)
 check("```" in dsc.contents(DEE)[-1], "copy text in code blocks")
+press(DEE, f"abs:{pid}", mid)
+check(dsc.contents(DEE)[-1].startswith("📃 **") and store.paper(pid)["abstract"][:30] in dsc.contents(DEE)[-1], "📃 Abstract on Discord")
 
 import cite  # noqa: E402
 

@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # test output has emoji; Windows consoles may not
     failed = []
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     for test in sorted(HERE.glob("test_*.py")):
