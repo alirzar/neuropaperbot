@@ -16,6 +16,8 @@ import numpy as np
 import catalog
 from common import describe, gemini_models, now_utc
 from fetch_papers import fetch_sources, search_pubmed
+from generate_summaries import load_prompt as load_hook_prompt
+from generate_summaries import make_hooks
 from rank_papers import TopicScore, score_papers
 from rank_papers import load_prompt as load_ranking_prompt
 from vectors import BATCH, embed
@@ -29,6 +31,7 @@ QUALITY_WEIGHT = 0.02  # per point of Gemini's 1-10 score away from 5
 # every paper, and each on its own scale, so a fixed cutoff wouldn't do.)
 WATCH_CLOSE, WATCH_MENTIONED = 99, 75  # percentiles
 WATCH_MAX = 3  # messages per watched topic per update
+HOOKS_MAX = 400  # hooks written ahead per update (20 per Gemini request)
 
 TOPIC_CHECK = (
     '\n\nALSO: give each object a fourth field, "neuro": true if the paper is neuroscience, meaning it studies the '
@@ -122,6 +125,16 @@ def daily_update(store, cfg, client, alert=None, only=None, watched=None):
         if watched:
             for uid, pid, phrase in watch_matches(store, client, embedding_model(cfg), batch, settings.get("recent_days", 7)):
                 watched(uid, pid, phrase)
+    # Hooks now, many per request, so digests don't wait for Gemini: for the new papers, and any of
+    # the week's papers still without one.
+    shown = [p for p in store.recent(settings.get("recent_days", 7)) if not p.get("hook") and p.get("abstract")][:HOOKS_MAX]
+    if shown:
+        max_chars = cfg["posting"].get("hook_max_chars", 200)
+        try:
+            for pid, hook in make_hooks(client, gemini_models(cfg), load_hook_prompt(max_chars), shown, max_chars).items():
+                store.set_paper(pid, hook=hook)
+        except Exception as exc:  # each card writes its own hook when it's sent, as before
+            errors.append(f"hooks: {describe(exc)}")
     if not only:
         store.drop_sources(wanted)
         store.prune(settings.get("keep_days", 60))

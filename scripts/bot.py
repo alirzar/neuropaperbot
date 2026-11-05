@@ -23,6 +23,7 @@ import queue
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
@@ -44,6 +45,7 @@ log = logging.getLogger("bot")
 
 POLL_SECONDS = 25  # how long each request to Telegram waits for news
 TICK_SECONDS = 20  # how often the bot checks its schedule
+SLOW_SECONDS = 5  # actions that take longer are logged
 
 DEFAULTS = {  # overridden by the "bot" section of config.json
     "approval": True,
@@ -856,6 +858,7 @@ class Bot:
         papers = digest.pick(self.store, user, n + 1, self.settings["recent_days"], self.my_sources(user))
         if papers and header:
             self.say(user["id"], header)
+        self.write_hooks(user, papers[:n])
         for p in papers[:n]:
             self.send_card(user, p, kind)
         if len(papers) > n:
@@ -874,6 +877,14 @@ class Bot:
         if not self.send_papers(user, "more"):
             self.say(uid, "That's every new paper from the past week. More tomorrow!")
         return None
+
+    def write_hooks(self, user, papers):
+        """Hooks the daily update didn't write yet (papers that came in later), four at a time."""
+        missing = [p for p in papers if not p.get("hook") and p.get("abstract")]
+        if len(missing) > 1:
+            self.typing(user["id"])
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(self.with_hook, missing))
 
     def with_hook(self, p):
         """The paper, with its hook written (and saved) if it doesn't have one yet."""
@@ -1266,6 +1277,18 @@ class Bot:
             log.exception("The update failed%s", "" if only else "; it'll try again in 30 minutes")
 
 
+def what_happened(event, platform):
+    """A short, private description of an event for the log: the command or button, never what was typed."""
+    if platform == "discord":
+        text, data = event.get("text") or "", event.get("data") or ""
+    else:
+        text = ((event.get("message") or {}).get("text")) or ""
+        data = (event.get("callback_query") or {}).get("data") or ""
+    if data:
+        return f"{platform} button {data.partition(':')[0]}"
+    return f"{platform} {text.split()[0]}" if text.startswith("/") else f"{platform} message"
+
+
 def unreachable(user, exc, what):
     """Log a message that couldn't be delivered: briefly when the person blocked the bot or left its
     Discord server, in full otherwise."""
@@ -1328,16 +1351,21 @@ def main():
             except queue.Empty:
                 platform = None
             if platform:
+                started = time.monotonic()
                 try:
                     bot.handle(event, platform)
                 except (Exception, SystemExit):
                     log.exception("Couldn't handle a %s event", platform)
+                if time.monotonic() - started > SLOW_SECONDS:
+                    log.info("Slow: %s took %.0f seconds", what_happened(event, platform), time.monotonic() - started)
             if time.monotonic() - last_tick >= TICK_SECONDS:
                 last_tick = time.monotonic()
                 try:
                     bot.tick()
                 except (Exception, SystemExit):
                     log.exception("Scheduled work failed")
+                if time.monotonic() - last_tick > SLOW_SECONDS:
+                    log.info("Slow: scheduled digests took %.0f seconds", time.monotonic() - last_tick)
     except KeyboardInterrupt:
         log.info("Stopped.")
 

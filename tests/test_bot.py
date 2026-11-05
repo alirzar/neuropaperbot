@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -59,7 +60,8 @@ def fake_vector(text):
 class FakeGemini:
     def __init__(self):
         self.models = self
-        self.calls = {"embed": 0, "embedded": 0, "hook": 0, "score": 0, "explain": 0}
+        self.calls = {"embed": 0, "embedded": 0, "hook": 0, "hooks": 0, "score": 0, "explain": 0}
+        self.lock = threading.Lock()  # hooks can be written four at a time
 
     def embed_content(self, *, model, contents, config=None):
         self.calls["embed"] += 1
@@ -70,13 +72,18 @@ class FakeGemini:
         if config and config.get("response_schema") is explain.Explanation:
             self.calls["explain"] += 1
             return SimpleNamespace(text=json.dumps({k: f"{k} part <b>&" for k, _ in explain.PARTS}))
+        if config and "Hook" in str(config.get("response_schema")):
+            self.calls["hooks"] += 1
+            items = re.findall(r"^ID: (p\d+)\nSOURCE: .*\nTITLE: (.*)$", contents, re.M)
+            return SimpleNamespace(text=json.dumps([{"id": i, "hook": f"Hook: {t[:60]}"} for i, t in items]))
         if config:
             self.calls["score"] += 1
             self.last_prompt = contents
             items = re.findall(r"^ID: (p\d+)\nSOURCE: .*\nTITLE: (.*)$", contents, re.M)
             return SimpleNamespace(text=json.dumps(
                 [{"id": i, "score": 7, "reason": "fake", "neuro": "machine learning" not in t.lower()} for i, t in items]))
-        self.calls["hook"] += 1
+        with self.lock:
+            self.calls["hook"] += 1
         title = re.search(r"^TITLE: (.*)$", contents, re.M).group(1)
         return SimpleNamespace(text=f"Hook: {title[:60]}")
 
@@ -334,6 +341,8 @@ print("2. the daily update")
 result = digest.daily_update(store, cfg, gemini, alert=bot.send_alert)
 check(fetched[-1] == set(BASE_KEYS), f"nobody ticked anything: fetches the base sources: {sorted(fetched[-1])}")
 check(result["new"] == 8 and not result["errors"], f"8 papers added ({result})")
+check(all((p["hook"] or "").startswith("Hook: ") for p in store.recent(7)), "every new paper has its teaser already")
+check(gemini.calls["hooks"] == 1 and gemini.calls["hook"] == 0, "all 8 written in one request, not one by one")
 check(all(p["vector"] is not None and p["quality"] == 7 for p in store.recent(7)), "each has a fingerprint and a score")
 check('"neuro"' in gemini.last_prompt, "Gemini is asked whether each paper is neuroscience")
 check(store.get("last_update") is not None, "update recorded")
@@ -415,7 +424,11 @@ check(brain["vector"] is not None and not brain["hidden"] and brain["src"] == "p
 check(other["hidden"] and other["vector"] is None, "its machine learning paper is kept aside, unfingerprinted")
 check(gemini.calls["embedded"] - embedded == 1, "only the brain paper was sent for a fingerprint")
 check(all(p["pid"] != other["pid"] for p in store.recent(7)), "and never offered")
+store.run("UPDATE papers SET hook=NULL")  # as if these papers had come in after the daily update
+written = gemini.calls["hook"]
 message(ANA, "/digest")
+check(gemini.calls["hook"] - written == 3 and all("Hook:" in c["caption"] for c in tg.to(ANA, "sendPhoto")[-3:]),
+      "missing teasers are written on the spot, all three together")
 check("Dopamine release encodes reward" in tg.to(ANA, "sendPhoto")[-3]["caption"], "Ana's next paper is Nature's, from a source Ana chose")
 check("💡 Matches <i>Reward, emotion &amp; stress</i> · from your source Nature" in tg.to(ANA, "sendPhoto")[-3]["caption"],
       "its card says why: the area it matched, and Ana's source")
@@ -771,6 +784,13 @@ tap(CARL, "count:5")
 check(store.user(CARL)["per_digest"] == 5, "while real ones still work")
 tap(CARL, "count:10")
 check(store.user(CARL)["per_digest"] == 10, "up to 10 papers")
+
+print("21. the log of slow actions says what, but not what people typed")
+happened = botmod.what_happened
+check(happened({"message": {"text": "/find grid cells"}}, "telegram") == "telegram /find", "a command, without its words")
+check(happened({"message": {"text": "my secret project"}}, "telegram") == "telegram message", "a message, without its words")
+check(happened({"callback_query": {"data": f"like:{pid}"}}, "telegram") == "telegram button like", "a button")
+check(happened({"kind": "tap", "data": "more"}, "discord") == "discord button more", "on Discord too")
 
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)
