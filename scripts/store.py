@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS users (
     keywords TEXT NOT NULL DEFAULT '',
     tz TEXT,
     hour INTEGER,
+    days TEXT,                       -- the weekdays it comes (JSON list, 0 is Monday), or NULL for every day
     per_digest INTEGER,
     sources TEXT,                    -- the sources they ticked (JSON list of keys); NULL until they tick one
     profile BLOB,                    -- a fingerprint per topic and keyword phrase
@@ -60,6 +61,10 @@ CREATE TABLE IF NOT EXISTS follows (
     user_id INTEGER NOT NULL, author_key TEXT NOT NULL, label TEXT NOT NULL,
     PRIMARY KEY (user_id, author_key)
 );
+CREATE TABLE IF NOT EXISTS watches (   -- topics people asked to hear about (/watch)
+    user_id INTEGER NOT NULL, phrase TEXT NOT NULL,
+    PRIMARY KEY (user_id, phrase)
+);
 CREATE TABLE IF NOT EXISTS usage (
     user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL,
     PRIMARY KEY (user_id, day, kind)
@@ -74,6 +79,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 ADDED_COLUMNS = [  # columns that came later, added to older databases when the bot starts
     ("users", "sources", "TEXT"),
     ("users", "platform", "TEXT NOT NULL DEFAULT 'telegram'"),
+    ("users", "days", "TEXT"),
     ("papers", "src", "TEXT"),
     ("papers", "hidden", "INTEGER NOT NULL DEFAULT 0"),
 ]
@@ -83,6 +89,7 @@ def _user(row):
     user = dict(row)
     user["topics"] = json.loads(user["topics"])
     user["sources"] = None if user["sources"] is None else json.loads(user["sources"])
+    user["days"] = None if user["days"] is None else json.loads(user["days"])
     user["profile"] = unpack(user["profile"])
     return user
 
@@ -154,7 +161,7 @@ class Store:
         )
 
     def update_user(self, uid, **fields):
-        for name in ("topics", "sources"):
+        for name in ("topics", "sources", "days"):
             if fields.get(name) is not None:
                 fields[name] = json.dumps(fields[name])
         if fields.get("profile") is not None:
@@ -163,7 +170,7 @@ class Store:
         self.run(f"UPDATE users SET {sets} WHERE id=?", *fields.values(), uid)
 
     def delete_user(self, uid):
-        for table, column in (("sent", "user_id"), ("follows", "user_id"), ("usage", "user_id"), ("users", "id")):
+        for table, column in (("sent", "user_id"), ("follows", "user_id"), ("watches", "user_id"), ("usage", "user_id"), ("users", "id")):
             self.run(f"DELETE FROM {table} WHERE {column}=?", uid)
 
     def use(self, uid, kind, day):
@@ -275,6 +282,53 @@ class Store:
 
     def followers(self, key):
         return [(r[0], r[1]) for r in self.run("SELECT user_id, label FROM follows WHERE author_key=?", key)]
+
+    # ---------- topic watches ----------
+    def watch(self, uid, phrase):
+        self.run("INSERT OR IGNORE INTO watches(user_id, phrase) VALUES (?, ?)", uid, phrase)
+
+    def unwatch(self, uid, phrase):
+        return self.run("DELETE FROM watches WHERE user_id=? AND lower(phrase)=lower(?)", uid, phrase).rowcount > 0
+
+    def watches(self, uid=None):
+        """(user ID, phrase) for each topic watched, by one person or by everyone who's active."""
+        if uid is not None:
+            return [tuple(r) for r in self.run("SELECT user_id, phrase FROM watches WHERE user_id=? ORDER BY phrase", uid)]
+        rows = self.run("SELECT user_id, phrase FROM watches JOIN users ON users.id=watches.user_id WHERE status='active'")
+        return [tuple(r) for r in rows]
+
+    # ---------- what everyone liked, and numbers for the admin ----------
+    def popular(self, days, n, people=2):
+        """This week's papers that at least `people` people gave 👍 or saved, most first: (paper, likes, saves)."""
+        since = iso(now_utc() - timedelta(days=days))
+        rows = self.run(
+            "SELECT papers.*, SUM(feedback=1) AS likes, SUM(saved=1) AS saves FROM sent JOIN papers USING (pid)"
+            " WHERE papers.added_at>=? AND (feedback=1 OR saved=1)"
+            " GROUP BY pid HAVING COUNT(DISTINCT user_id)>=? ORDER BY likes + saves DESC, likes DESC LIMIT ?",
+            since, people, n,
+        ).fetchall()
+        return [(_paper({k: r[k] for k in r.keys() if k not in ("likes", "saves")}), r["likes"], r["saves"]) for r in rows]
+
+    def stats(self, days):
+        """Counts for /stats over the last `days` days."""
+        since = iso(now_utc() - timedelta(days=days))
+        one = lambda sql, *args: self.run(sql, *args).fetchone()[0] or 0  # noqa: E731
+        return {
+            "telegram": one("SELECT COUNT(*) FROM users WHERE status='active' AND platform='telegram'"),
+            "discord": one("SELECT COUNT(*) FROM users WHERE status='active' AND platform='discord'"),
+            "waiting": one("SELECT COUNT(*) FROM users WHERE status='pending'"),
+            "papers": one("SELECT COUNT(*) FROM papers WHERE added_at>=? AND hidden=0 AND vector IS NOT NULL", since),
+            "off_topic": one("SELECT COUNT(*) FROM papers WHERE added_at>=? AND hidden=1 AND vector IS NULL AND quality IS NOT NULL", since),
+            "hooks": one("SELECT COUNT(*) FROM papers WHERE added_at>=? AND hook IS NOT NULL", since),
+            "summaries": one("SELECT COUNT(*) FROM papers WHERE added_at>=? AND summary IS NOT NULL", since),
+            "digest": one("SELECT COUNT(*) FROM sent WHERE at>=? AND kind IN ('digest', 'more')", since),
+            "alerts": one("SELECT COUNT(*) FROM sent WHERE at>=? AND kind IN ('alert', 'watch')", since),
+            "likes": one("SELECT COUNT(*) FROM sent WHERE at>=? AND feedback=1", since),
+            "dislikes": one("SELECT COUNT(*) FROM sent WHERE at>=? AND feedback=-1", since),
+            "saves": one("SELECT COUNT(*) FROM sent WHERE at>=? AND saved=1", since),
+            "searches": one("SELECT SUM(n) FROM usage WHERE day>=? AND kind IN ('search', 'journal')", since[:10]),
+            "watches": one("SELECT COUNT(*) FROM watches"),
+        }
 
     # ---------- sources ----------
     def chosen_sources(self):

@@ -27,12 +27,13 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 import catalog
+import cite
 import digest
 import discord_api
 import explain
 import telegram_api as tg
 from card import make_card
-from common import describe, gemini_client, gemini_models, load_config, name_key, now_utc, require_env
+from common import describe, gemini_client, gemini_models, load_config, name_key, now_utc, require_env, shorten
 from compose import attribution, channel_post, copy_message
 from generate_summaries import load_prompt as load_hook_prompt
 from generate_summaries import make_hook
@@ -54,9 +55,10 @@ DEFAULTS = {  # overridden by the "bot" section of config.json
     "summaries_per_day": 10,
     "searches_per_day": 30,
     "follows_per_person": 20,
+    "watches_per_person": 10,
     "more_per_day": 5,
 }
-SETUP_STEPS = ("topics", "keywords", "sources", "journal", "tz", "hour", "confirm", "keywords_review", "journal_review")
+SETUP_STEPS = ("topics", "keywords", "sources", "journal", "tz", "hour", "days", "confirm", "keywords_review", "journal_review")
 REVIEW_STEPS = ("keywords_review", "journal_review")  # answering a question asked from the summary, in setup
 
 ZONES = [
@@ -76,21 +78,24 @@ ZONES = [
 ]
 HOURS = [6, 7, 8, 9, 10, 12, 14, 17, 20]
 COUNTS = [1, 3, 5, 8]
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python's weekday() order
+EVERY_DAY, WEEKDAYS = list(range(7)), list(range(5))
 
 HELP = """I send you a daily digest of new neuroscience papers picked for your interests.
 
 /digest: today's papers, now (tap ➡️ under them for more)
-/find <i>topic</i>: search recent papers
-/saved: papers you saved
+/find <i>topic</i>: search recent papers · /popular: this week's favourites
+/saved: papers you saved · /export: them as a file for Zotero
 /follow <i>name</i>: a message when an author publishes (/following, /unfollow)
-/settings: what you get, and when (or straight to /topics, /keywords, /sources, /time)
+/watch <i>topic</i>: a message when a new paper is on it (/watching, /unwatch)
+/settings: what you get, and when (or straight to /topics, /keywords, /sources, /time, /days)
 /privacy: what I keep · /stop: delete it all
 
 Paste a DOI or a bioRxiv link and I'll summarize the paper in plain language."""
 
-PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone and hour you gave me; which papers I sent you; and your 👍/👎, saved papers and followed authors.
+PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone, hour and days you gave me; which papers I sent you; and your 👍/👎, saved papers, followed authors and watched topics.
 
-It's only used to pick your papers. It stays in the bot's own database and isn't shared. Journals you add are offered to everyone, without your name. /stop deletes all of it."""
+It's only used to pick your papers. It stays in the bot's own database and isn't shared. Your 👍 and saves count in /popular, without your name, once at least two people liked or saved a paper. Journals you add are offered to everyone, without your name. /stop deletes all of it."""
 
 SOURCES = """📚 <b>Where your papers come from</b>
 
@@ -106,10 +111,16 @@ DISCORD_COMMANDS = [  # Discord's slash commands: (name, description, option or 
     ("follow", "Get a message when an author publishes", ("name", "Their first and last name", True)),
     ("following", "Authors you follow", None),
     ("unfollow", "Stop following an author", ("name", "Their name", False)),
+    ("watch", "Get a message when a new paper is on a topic", ("topic", "Like: grid cells", True)),
+    ("watching", "Topics you watch", None),
+    ("unwatch", "Stop watching a topic", ("topic", "The topic", False)),
+    ("popular", "This week's most liked and saved papers", None),
+    ("export", "Your saved papers as a file for Zotero or LaTeX", ("format", "Leave empty for Zotero, EndNote or Mendeley; or type bibtex", False)),
     ("topics", "The areas you follow", None),
     ("keywords", "Your interests in your own words", ("text", "Like: hippocampal replay, sleep", False)),
     ("sources", "The journals and preprints you get", None),
     ("time", "When your digest arrives", None),
+    ("days", "Which days your digest comes", None),
     ("tz", "Set your time zone by name", ("name", "Like Europe/Madrid", True)),
     ("settings", "Your choices, and changing them", None),
     ("summary", "A plain-language summary of a paper", ("doi", "A DOI, or a bioRxiv or medRxiv link", True)),
@@ -143,6 +154,27 @@ def pair_up(items, short=19):
             rows.append([button(*items[i][:2])])
             i += 1
     return rows
+
+
+def choice(value, allowed):
+    """A button's number, if it's one the bot offers; else None. (A modified app can send anything.)"""
+    try:
+        n = int(value)
+    except ValueError:
+        return None
+    return n if n in allowed else None
+
+
+def describe_days(days):
+    """'every day', 'on weekdays', 'on weekends', or 'on Mon, Wed, Fri'."""
+    days = sorted(days)
+    if days == EVERY_DAY:
+        return "every day"
+    if days == WEEKDAYS:
+        return "on weekdays"
+    if days == [5, 6]:
+        return "on weekends"
+    return "on " + ", ".join(DAYS[d] for d in days)
 
 
 def per_month(n):
@@ -191,6 +223,9 @@ class Bot:
 
     def typing(self, uid):
         self.app(uid).typing(uid)
+
+    def document(self, uid, data, filename, caption):
+        return self.app(uid).document(uid, data, filename, caption)
 
     def local_now(self, user, now=None):
         return (now or now_utc()).astimezone(ZoneInfo(user["tz"] or "UTC"))
@@ -295,6 +330,7 @@ class Bot:
             "/keywords": lambda: self.set_keywords(user, arg) if arg else self.ask_keywords(user, "keywords_edit"),
             "/sources": lambda: self.ask_sources(user),
             "/time": lambda: self.ask_tz(user),
+            "/days": lambda: self.ask_days(user),
             "/tz": lambda: self.set_tz(user, arg),
             "/settings": lambda: self.show_summary(user),
             "/find": lambda: self.find(user, arg),
@@ -302,6 +338,12 @@ class Bot:
             "/follow": lambda: self.follow(user, arg),
             "/unfollow": lambda: self.unfollow(user, arg),
             "/following": lambda: self.show_follows(user),
+            "/watch": lambda: self.watch(user, arg),
+            "/watching": lambda: self.show_watches(user),
+            "/unwatch": lambda: self.unwatch(user, arg),
+            "/popular": lambda: self.show_popular(user),
+            "/export": lambda: self.export(user, arg),
+            "/stats": lambda: self.show_stats(user),
             "/summary": lambda: self.summarize_doi(user, find_doi(arg)),
             "/privacy": lambda: self.say(uid, PRIVACY),
             "/stop": lambda: self.stop(user),
@@ -327,9 +369,12 @@ class Bot:
             "src_pick": lambda: self.add_journal(user, value, message_id),
             "src_cancel": lambda: self.cancel_journal(user, message_id),
             "src_done": lambda: self.sources_done(user, message_id),
-            "tz": lambda: self.set_tz(user, ZONES[int(value)][1]),
-            "hour": lambda: self.set_hour(user, int(value)),
-            "count": lambda: self.set_count(user, int(value)),
+            "tz": lambda: self.pick_zone(user, choice(value, range(len(ZONES)))),
+            "hour": lambda: self.set_hour(user, choice(value, HOURS)),
+            "day": lambda: self.toggle_day(user, choice(value, EVERY_DAY), message_id),
+            "days": lambda: self.preset_days(user, value, message_id),
+            "days_done": lambda: self.days_done(user, message_id),
+            "count": lambda: self.set_count(user, choice(value, COUNTS)),
             "change": lambda: self.change(user, value, message_id),
             "go": lambda: self.start_digest(user, message_id),
             "more": lambda: self.more(user, message_id),
@@ -339,6 +384,7 @@ class Bot:
             "sum": lambda: self.summarize_pid(user, value),
             "copy": lambda: self.copy(user, value),
             "li": lambda: self.linkedin(user, value),
+            "near": lambda: self.similar(user, value),
         }.get(action)
         return handler() if handler else None
 
@@ -376,6 +422,7 @@ class Bot:
             "sources": self.ask_sources,
             "tz": self.ask_tz,
             "hour": self.ask_hour,
+            "days": self.ask_days,
             "confirm": self.show_summary,
         }
         ask.get(user["step"], lambda u: self.say(u["id"], HELP))(user)
@@ -608,6 +655,9 @@ class Bot:
             in_rows(buttons, 2),
         )
 
+    def pick_zone(self, user, index):
+        return None if index is None else self.set_tz(user, ZONES[index][1])
+
     def set_tz(self, user, name):
         uid = user["id"]
         try:
@@ -627,15 +677,62 @@ class Bot:
 
     def set_hour(self, user, hour):
         uid = user["id"]
+        if hour is None:
+            return None
         self.store.update_user(uid, hour=hour)
-        if user["step"] == "hour":  # the last question: now the summary, to confirm
+        if user["step"] == "hour":  # part of setup: on to the days
+            self.store.update_user(uid, step="days")
+            self.ask_days(self.store.user(uid))
+        elif user["step"] == "confirm":
+            self.show_summary(self.store.user(uid))
+        else:
+            self.say(uid, f"Done: your digest now comes at {hour}:00 ({html.escape(user['tz'] or 'UTC')} time).")
+        return "Saved"
+
+    def my_days(self, user):
+        """The weekdays this person gets a digest (0 is Monday); every day unless they chose."""
+        return EVERY_DAY if user["days"] is None else sorted(user["days"])
+
+    def day_buttons(self, days):
+        toggles = [button(("✅ " if i in days else "") + name, f"day:{i}") for i, name in enumerate(DAYS)]
+        presets = [button("Every day", "days:all"), button("Weekdays", "days:weekdays")]
+        return [toggles[:4], toggles[4:], presets, [button("Done", "days_done")]]
+
+    def ask_days(self, user):
+        self.say(user["id"], "Which days should your digest come? Tap a day to add or remove it, then <b>Done</b>.",
+                 self.day_buttons(self.my_days(user)))
+
+    def toggle_day(self, user, day, message_id):
+        if day is None:
+            return None
+        days = self.my_days(user)
+        days = [d for d in days if d != day] if day in days else sorted(days + [day])
+        return self.save_days(user, days, message_id)
+
+    def preset_days(self, user, preset, message_id):
+        days = {"all": EVERY_DAY, "weekdays": WEEKDAYS}.get(preset)
+        return None if days is None else self.save_days(user, days, message_id)
+
+    def save_days(self, user, days, message_id):
+        self.store.update_user(user["id"], days=days)
+        if message_id:
+            self.edit_buttons(user["id"], message_id, self.day_buttons(days))
+        return None
+
+    def days_done(self, user, message_id):
+        uid, days = user["id"], self.my_days(user)
+        if not days:
+            return Alert("Pick at least one day")
+        if message_id:
+            self.edit_buttons(uid, message_id, [])
+        if user["step"] == "days":  # the last question: now the summary, to confirm
             self.store.update_user(uid, step="confirm")
             self.refresh_profile(self.store.user(uid))
             self.show_summary(self.store.user(uid))
         elif user["step"] == "confirm":
             self.show_summary(self.store.user(uid))
         else:
-            self.say(uid, f"Done: your digest now comes at {hour}:00 ({html.escape(user['tz'] or 'UTC')} time).")
+            self.say(uid, f"Done: your digest now comes {describe_days(days)}.")
         return "Saved"
 
     def ask_count(self, user):
@@ -643,6 +740,8 @@ class Bot:
         self.say(user["id"], f"How many papers per digest? (now {now})", [[button(str(n), f"count:{n}") for n in COUNTS]])
 
     def set_count(self, user, n):
+        if n is None:
+            return None
         self.store.update_user(user["id"], per_digest=n)
         if user["step"] == "confirm":
             self.show_summary(self.store.user(user["id"]))
@@ -657,7 +756,7 @@ class Bot:
         names = {s["key"]: s["name"] for s in catalog.sources(self.cfg, self.store)}
         sources = [names.get(key, key) for key in self.my_sources(user)]
         zone = next((label for label, name in ZONES if name == user["tz"]), user["tz"] or "UTC")
-        when = f"every day at {user['hour']}:00, {zone} time" if user["hour"] is not None else "not set yet"
+        when = f"{describe_days(self.my_days(user))} at {user['hour']}:00, {zone} time" if user["hour"] is not None else "not set yet"
         n = user["per_digest"] or self.settings["papers_per_digest"]
         return "\n".join([
             "📋 <b>Your digest</b>",
@@ -674,7 +773,7 @@ class Bot:
         """The summary with a button to change each part; at the end of setup, also to start."""
         changes = [
             [button("Areas", "change:topics"), button("Keywords", "change:keywords"), button("Sources", "change:sources")],
-            [button("Time", "change:time"), button("Papers each time", "change:count")],
+            [button("Time", "change:time"), button("Days", "change:days"), button("Papers each time", "change:count")],
         ]
         if user["step"] == "confirm":
             text = self.summary(user) + "\n\nDoes this look right? Start your digest, or change something first."
@@ -696,6 +795,8 @@ class Bot:
             self.ask_sources(user)
         elif what == "time":
             self.ask_tz(user)
+        elif what == "days":
+            self.ask_days(user)
         elif what == "count":
             self.ask_count(user)
         return None
@@ -708,15 +809,21 @@ class Bot:
         if message_id:
             self.edit_buttons(uid, message_id, [])
         self.store.update_user(uid, step=None)
-        self.say(uid, f"All set! Your digest comes every day at {user['hour']}:00. Here are today's papers:")
+        self.say(uid, f"All set! Your digest comes {describe_days(self.my_days(user))} at {user['hour']}:00. Here are today's papers:")
         self.send_digest(self.store.user(uid), manual=True)
         self.say(uid, "Tip: /settings shows your choices, and /help lists everything I can do.")
         return "Started"
 
+    def interests(self, user):
+        """(name, text) for each interest, in the order of the person's fingerprints: each chosen area
+        (its description is what gets fingerprinted), then each keyword phrase (up to 10)."""
+        areas = [self.cfg["topics"][key] for key in user["topics"] if key in self.cfg["topics"]]
+        phrases = [part.strip() for part in re.split(r"[,;\n]", user["keywords"] or "") if part.strip()][:10]
+        return [(label, text) for label, text in areas] + [(phrase, phrase) for phrase in phrases]
+
     def refresh_profile(self, user):
         """Fingerprints for each chosen topic and keyword phrase; a paper matching any of them scores well."""
-        texts = [self.cfg["topics"][key][1] for key in user["topics"] if key in self.cfg["topics"]]
-        texts += [part.strip() for part in re.split(r"[,;\n]", user["keywords"] or "") if part.strip()][:10]
+        texts = [text for _, text in self.interests(user)]
         profile = digest.query_vectors(self.store, self.client, self.embedding_model, texts) if texts else None
         self.store.update_user(user["id"], profile=profile)
 
@@ -776,7 +883,7 @@ class Bot:
                 button("👎" + (" ✓" if row["feedback"] < 0 else ""), f"dislike:{pid}"),
                 button("💾 Saved" if row["saved"] else "💾 Save", f"save:{pid}"),
             ],
-            [button("📄 Summary", f"sum:{pid}"), button("📋 Copy", f"copy:{pid}")],
+            [button("📄 Summary", f"sum:{pid}"), button("📋 Copy", f"copy:{pid}"), button("🔗 Similar", f"near:{pid}")],
         ]
         if user["is_admin"] and os.getenv("LINKEDIN_ACCESS_TOKEN"):
             buttons[1].append(button("💼 LinkedIn", f"li:{pid}"))
@@ -786,13 +893,31 @@ class Bot:
         """A paper as its card image, with the hook, title, authors and link, and the buttons."""
         p = self.with_hook(p)
         png = make_card(p, self.cfg.get("name", "Neuro Paper Bot"))
-        message_id = self.photo(user["id"], png, channel_post(p, None), self.paper_buttons(user, p["pid"]))
+        caption, why = channel_post(p, None), self.why(user, p)
+        if why and len(caption) + len(why) < 1000:  # Telegram allows 1024 characters
+            caption += "\n\n" + why
+        message_id = self.photo(user["id"], png, caption, self.paper_buttons(user, p["pid"]))
         self.store.record_sent(user["id"], p["pid"], kind, message_id)
 
-    def send_compact(self, user, p, kind):
+    def why(self, user, p):
+        """'💡 Matches Motor control · from your source Nature Neuroscience', for a digest card."""
+        parts, interests = [], self.interests(user)
+        best = digest.best_interest(user, p)
+        if best is not None and len(interests) == len(user["profile"]):
+            parts.append(f"matches <i>{html.escape(interests[best][0])}</i>")
+        if p.get("src") in set(self.my_sources(user)):
+            name = next((s["name"] for s in catalog.sources(self.cfg, self.store) if s["key"] == p["src"]), p.get("venue"))
+            parts.append(f"from your source {html.escape(name or '')}")
+        if not parts:
+            return None
+        text = " · ".join(parts)
+        return "💡 " + text[0].upper() + text[1:]
+
+    def send_compact(self, user, p, kind, note=""):
         """A paper as a short text message with the same buttons, for search results and alerts."""
         date = f" · {p['date']}" if p.get("date") else ""
         text = f"<b>{html.escape(p['title'])}</b>\n{html.escape(attribution(p))}{date}\n{html.escape(p.get('link') or '')}"
+        text += f"\n{note}" if note else ""
         message_id = self.say(user["id"], text, self.paper_buttons(user, p["pid"]))
         self.store.record_sent(user["id"], p["pid"], kind, message_id)
 
@@ -941,6 +1066,108 @@ class Bot:
         names = "\n".join(f"• {html.escape(f['label'])}" for f in follows)
         self.say(user["id"], f"You follow:\n{names}\n\n/unfollow <i>name</i> to stop.")
 
+    # ---------- topic watches ----------
+    def watch(self, user, phrase):
+        uid, phrase = user["id"], " ".join(phrase.split())[:100]
+        if len(phrase) < 3:
+            return self.say(uid, "Send /watch with a topic, like <code>/watch grid cells</code>.")
+        mine = [p for _, p in self.store.watches(uid)]
+        limit = self.settings["watches_per_person"]
+        if phrase.lower() not in {p.lower() for p in mine} and len(mine) >= limit:
+            return self.say(uid, f"You can watch up to {limit} topics. /unwatch one first.")
+        try:
+            digest.query_vectors(self.store, self.client, self.embedding_model, [phrase])  # its fingerprint, kept for later
+        except Exception as exc:
+            log.warning("Couldn't fingerprint %r: %s", phrase, describe(exc))
+            return self.say(uid, "Sorry, I couldn't set that up just now. Please try again in a few minutes.")
+        self.store.watch(uid, phrase)
+        self.say(
+            uid,
+            f"Watching <i>{html.escape(phrase)}</i>. When a new paper mentions it, or is among the week's closest "
+            "matches to it, I'll message you that day (up to 3 a day).",
+        )
+
+    def unwatch(self, user, phrase):
+        if not phrase:
+            return self.show_watches(user)
+        if self.store.unwatch(user["id"], phrase.strip()):
+            self.say(user["id"], f"Stopped watching <i>{html.escape(phrase.strip())}</i>.")
+        else:
+            self.say(user["id"], f"You weren't watching <i>{html.escape(phrase.strip())}</i>. /watching lists your topics.")
+
+    def show_watches(self, user):
+        phrases = [p for _, p in self.store.watches(user["id"])]
+        if not phrases:
+            return self.say(user["id"], "You're not watching any topics yet. Try <code>/watch grid cells</code>.")
+        lines = "\n".join(f"• {html.escape(p)}" for p in phrases)
+        self.say(user["id"], f"You watch:\n{lines}\n\n/unwatch <i>topic</i> to stop.")
+
+    def send_watch(self, uid, pid, phrase):
+        """Called by the daily update for each new paper on a topic this person watches."""
+        user, p = self.store.user(uid), self.store.paper(pid)
+        if not user or user["status"] != "active" or not p or pid in self.store.sent_pids(uid):
+            return
+        try:
+            self.say(uid, f"🔭 A new paper on <i>{html.escape(phrase)}</i>:")
+            self.send_compact(user, p, "watch")
+        except Exception as exc:  # one person who can't be reached mustn't stop the update
+            unreachable(user, exc, "watch alert")
+
+    # ---------- more like this, popular papers, citation files, numbers ----------
+    def similar(self, user, pid):
+        p = self.store.paper(pid)
+        if not p:
+            return Alert("That paper is gone")
+        found = digest.similar(self.store, p, self.settings["search_days"], 5)
+        if not found:
+            return Alert("I can only compare papers from the last few weeks")
+        self.say(user["id"], f"🔗 The closest papers to <b>{html.escape(shorten(p['title'], 120))}</b>:")
+        for q in found:
+            self.send_compact(user, q, "similar")
+        return None
+
+    def show_popular(self, user):
+        found = self.store.popular(self.settings["recent_days"], 5)
+        if not found:
+            return self.say(
+                user["id"],
+                "Nothing yet: a paper shows up here once at least two people gave it 👍 or saved it this week.",
+            )
+        self.say(user["id"], "🔥 <b>This week's favourites</b>, by 👍 and saves:")
+        for p, likes, saves in found:
+            counts = " · ".join(x for x in (f"👍 {likes}" if likes else "", f"💾 {saves}" if saves else "") if x)
+            self.send_compact(user, p, "popular", counts)
+
+    def export(self, user, arg):
+        uid = user["id"]
+        papers = self.store.saved_papers(uid, 500)
+        if not papers:
+            return self.say(uid, "Nothing saved yet. Tap 💾 under any paper to keep it, then /export.")
+        kind = "bib" if arg.strip().lower() in ("bib", "bibtex", "latex") else "ris"
+        self.typing(uid)
+        text = cite.citations(papers, kind)
+        where = "LaTeX (BibTeX)" if kind == "bib" else "Zotero, EndNote or Mendeley (File → Import)"
+        n = len(papers)
+        self.document(uid, text.encode("utf-8"), f"saved-papers.{kind}",
+                      f"📚 Your {n} saved paper{'' if n == 1 else 's'}, for {where}.")
+        return None
+
+    def show_stats(self, user):
+        if not user["is_admin"]:
+            return self.say(user["id"], HELP)
+        days = self.settings["recent_days"]
+        n = self.store.stats(days)
+        lines = [
+            f"📊 <b>The last {days} days</b>",
+            f"People: {n['telegram'] + n['discord']} active ({n['telegram']} on Telegram, {n['discord']} on Discord), {n['waiting']} waiting",
+            f"Papers: {n['papers']} new, {n['off_topic']} set aside as off topic",
+            f"Sent: {n['digest']} digest papers, {n['alerts']} author and topic alerts",
+            f"Reactions: 👍 {n['likes']} · 👎 {n['dislikes']} · 💾 {n['saves']}",
+            f"Searches: {n['searches']} · watched topics: {n['watches']}",
+            f"Gemini: about {n['papers']} paper fingerprints, {n['hooks']} hooks, {n['summaries']} summaries",
+        ]
+        self.say(user["id"], "\n".join(lines))
+
     def send_alert(self, uid, pid, label):
         """Called by the daily update for each new paper by someone this person follows."""
         user, p = self.store.user(uid), self.store.paper(pid)
@@ -979,7 +1206,8 @@ class Bot:
             if user["step"] in SETUP_STEPS or user["tz"] is None or user["hour"] is None:
                 continue  # still setting up
             local = self.local_now(user, now)
-            if local.hour >= user["hour"] and user["last_digest"] != local.date().isoformat():
+            due = local.hour >= user["hour"] and local.weekday() in self.my_days(user)
+            if due and user["last_digest"] != local.date().isoformat():
                 try:
                     self.send_digest(user, now=now)
                 except Exception as exc:
@@ -1008,7 +1236,7 @@ class Bot:
 
     def run_update(self, only=None):
         try:
-            digest.daily_update(self.store, self.cfg, self.client, alert=self.send_alert, only=only)
+            digest.daily_update(self.store, self.cfg, self.client, alert=self.send_alert, only=only, watched=self.send_watch)
         except Exception:
             log.exception("The update failed%s", "" if only else "; it'll try again in 30 minutes")
 

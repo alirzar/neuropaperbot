@@ -95,6 +95,7 @@
     "summaries_per_day": 10,
     "searches_per_day": 30,
     "follows_per_person": 20,
+    "watches_per_person": 10,
     "more_per_day": 5
   },
   "topics": {

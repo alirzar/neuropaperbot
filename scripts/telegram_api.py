@@ -59,6 +59,11 @@ def photo(chat, png, caption, buttons=None):
     )
 
 
+def document(chat, data, filename, caption):
+    """A file, such as a citation file, with an HTML caption."""
+    return call("sendDocument", files={"document": (filename, data)}, chat_id=chat, caption=caption, parse_mode="HTML")
+
+
 def edit(chat, message_id, text, buttons=None):
     """Replace a text message's text, and its buttons (none if not given)."""
     try:
@@ -109,6 +114,9 @@ class App:
 
     def photo(self, chat, png, caption, buttons=None):
         return photo(chat, png, caption, buttons)["message_id"]
+
+    def document(self, chat, data, filename, caption):
+        return document(chat, data, filename, caption)["message_id"]
 
     def edit(self, chat, message_id, text, buttons=None):
         edit(chat, message_id, text, buttons)

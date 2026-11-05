@@ -230,6 +230,9 @@ check(dc.menu_taps("pick:src:0", ["b", "c"], [{"components": [{"custom_id": "pic
     {"value": "a", "default": True}, {"value": "b", "default": True}, {"value": "c", "default": False}]}]}]) == ["a", "c"], "a dropdown change is the taps that differ")
 store.run("DELETE FROM users WHERE id=999")
 
+check(dc.menu_taps("pick:tz:0", ["count:100000"], []) == [] and dc.menu_taps("pick:tz:0", ["tz:3"], []) == ["tz:3"],
+      "a pick-one menu only passes on its own kind of choice")
+
 print("3. slash commands")
 check(dc.register_commands(botmod.DISCORD_COMMANDS) and len(dsc.commands) == len(botmod.DISCORD_COMMANDS), "registered")
 find = next(c for c in dsc.commands if c["name"] == "find")
@@ -289,7 +292,15 @@ check(store.user(DEE)["tz"] == "Europe/London", "UK picked")
 hour_id, hour, _ = dsc.last(DEE)
 check(labels(hour) == [["6:00", "7:00", "8:00"], ["9:00", "10:00", "12:00"], ["14:00", "17:00", "20:00"]], "hours stay buttons")
 press(DEE, "hour:9", hour_id)
+days_id, days, _ = dsc.last(DEE)
+menu = days["components"][0]["components"][0]
+check(menu["custom_id"] == "pick:day:0" and all(o["default"] for o in menu["options"]) and labels(days)[1:] == [["Every day", "Weekdays"], ["Done"]],
+      "days: a dropdown with every day ticked, then the shortcuts and Done")
+choose(DEE, days_id, "pick:day:0", [f"day:{d}" for d in range(5)])
+check(store.user(DEE)["days"] == [0, 1, 2, 3, 4], "weekends unticked in one go")
+press(DEE, "days_done", days_id)
 summary_id, summary, _ = dsc.last(DEE)
+check("**When:** on weekdays at 9:00, UK and Ireland time" in summary["content"], "the summary says when")
 check("📋 **Your digest**" in summary["content"] and "**Sources:** Nature Neuroscience (these come first)" in summary["content"],
       f"the summary, in Markdown: {summary['content'][:60]!r}")
 check(labels(summary)[0] == ["✅ Start my digest"] and summary["components"][0]["components"][0]["style"] == 1, "Start, highlighted")
@@ -304,7 +315,8 @@ mid, first, files = cards[0]
 check(files["files[0]"][0] == "card.png" and files["files[0]"][1][:4] == b"\x89PNG", "each with its card image")
 check(first["flags"] & dc.NO_EMBEDS and first["allowed_mentions"] == {"parse": []}, "no link previews, no pings")
 check("Hook:" in first["content"] and "**" in first["content"], f"caption in Markdown: {first['content'][:80]!r}")
-check(labels(first) == [["👍", "👎", "💾 Save"], ["📄 Summary", "📋 Copy"]], "the same buttons")
+check(labels(first) == [["👍", "👎", "💾 Save"], ["📄 Summary", "📋 Copy", "🔗 Similar"]], "the same buttons")
+check("💡 Matches _" in first["content"], f"and why it was picked: {first['content'][-70:]!r}")
 footer_id, footer, _ = [m for m in dsc.sent(DEE) if m[1]["content"] == "Want more?"][-1]
 check(labels(footer) == [["➡️ 3 more"]] and footer["components"][0]["components"][0]["style"] == 1, "and ➡️ 3 more")
 check("/help lists everything" in dsc.contents(DEE)[-1], "then the tip, as on Telegram")
@@ -322,12 +334,21 @@ check(len([1 for _, _, f in dsc.sent(DEE) if f]) == 6, "and 3 more cards come")
 press(DEE, f"copy:{pid}", mid)
 check("```" in dsc.contents(DEE)[-1], "copy text in code blocks")
 
+import cite  # noqa: E402
+
+cite.citation = lambda p, kind: f"TY  - JOUR\nTI  - {p['title']}\nER  - "
+press(DEE, f"save:{pid}", mid)
+command(DEE, "/export", token="tok-export")
+docs = [(path, p, f) for m, path, p, f in dsc.calls if m == "POST" and path == f"/channels/dm{DEE}/messages" and f and "card.png" not in str(f)]
+check(docs and docs[-1][2]["files[0]"][0] == "saved-papers.ris" and docs[-1][1]["attachments"][0]["filename"] == "saved-papers.ris",
+      "/export sends the file on Discord")
+
 print("8. commands")
 command(DEE, "/find locomotion", token="tok-find")
 check(any("closest matches" in c for c in dsc.contents(DEE)), "/find answers in the DM")
 check(("DELETE", "/webhooks/4242/tok-find/messages/@original", None, None) in dsc.calls, "and the thinking… line is removed")
 command(DEE, "/saved", token="tok-saved")
-check("Nothing saved yet" in dsc.contents(DEE)[-1], "/saved")
+check("Your saved papers" in dsc.contents(DEE)[-1], "/saved")
 dm(DEE, f"what about {PAPERS[0]['doi']}")
 check("**The question:**" in dsc.contents(DEE)[-1], "a pasted DOI gets a summary, in Markdown")
 message_admin("/users")

@@ -32,6 +32,7 @@ import catalog  # noqa: E402
 import digest  # noqa: E402
 import explain  # noqa: E402
 import linkedin_api  # noqa: E402
+import cite  # noqa: E402
 import telegram_api  # noqa: E402
 from common import load_config, short_id  # noqa: E402
 from store import Store  # noqa: E402
@@ -85,7 +86,9 @@ class FakeTelegram:
         self.calls, self.next_id = [], 1000
 
     def call(self, method, files=None, **params):
-        if method in ("sendMessage", "sendPhoto"):
+        if files:
+            params["_files"] = files
+        if method in ("sendMessage", "sendPhoto", "sendDocument"):
             self.next_id += 1
             params["_id"] = self.next_id
             self.calls.append((method, params))
@@ -224,6 +227,7 @@ def setup(uid, topics, keywords, tz_tap=None, tz_cmd=None, hour=8, sources=()):
     tap(uid, "src_done")
     tap(uid, f"tz:{tz_tap}") if tz_cmd is None else message(uid, f"/tz {tz_cmd}")
     tap(uid, f"hour:{hour}")
+    tap(uid, "days_done")
     tap(uid, "go")
 
 
@@ -256,13 +260,26 @@ tap(ADMIN, "src_done")
 check("No sources picked, so your papers come from everything I follow" in tg.texts(ADMIN)[-2], "picking none is fine, and explained")
 tap(ADMIN, "tz:0")
 tap(ADMIN, "hour:8")
-check(store.user(ADMIN)["step"] == "confirm", "after the hour: a summary to confirm")
+days = tg.to(ADMIN, "sendMessage")[-1]
+check(store.user(ADMIN)["step"] == "days" and "Which days" in days["text"], "after the hour: which days")
+check(buttons(days) == [["✅ Mon", "✅ Tue", "✅ Wed", "✅ Thu"], ["✅ Fri", "✅ Sat", "✅ Sun"], ["Every day", "Weekdays"], ["Done"]],
+      "every day ticked to start with, and two shortcuts")
+tap(ADMIN, "days:weekdays", message_id=days["_id"])
+check(store.user(ADMIN)["days"] == [0, 1, 2, 3, 4] and buttons(tg.edits()[-1])[1] == ["✅ Fri", "Sat", "Sun"], "Weekdays: Monday to Friday")
+for d in range(5):
+    tap(ADMIN, f"day:{d}", message_id=days["_id"])
+check(store.user(ADMIN)["days"] == [], "untick them all")
+tap(ADMIN, "days_done", message_id=days["_id"])
+check(answers[-1] == "Pick at least one day" and store.user(ADMIN)["step"] == "days", "no days: asked to pick one")
+tap(ADMIN, "days:all", message_id=days["_id"])
+tap(ADMIN, "days_done", message_id=days["_id"])
+check(store.user(ADMIN)["step"] == "confirm", "then a summary to confirm")
 summary = tg.to(ADMIN, "sendMessage")[-1]
 for line in ("<b>Areas:</b> Learning &amp; memory", "<b>In your words:</b> hippocampal replay, sleep",
              "<b>Sources:</b> none picked, so papers come from everything I follow",
              "<b>When:</b> every day at 8:00, Eastern (Toronto, New York) time", "<b>Papers each time:</b> 3"):
     check(line in summary["text"], f"summary shows {line!r}")
-check(buttons(summary) == [["✅ Start my digest"], ["Areas", "Keywords", "Sources"], ["Time", "Papers each time"]], "start, or change any part")
+check(buttons(summary) == [["✅ Start my digest"], ["Areas", "Keywords", "Sources"], ["Time", "Days", "Papers each time"]], "start, or change any part")
 store.update_user(ADMIN, last_digest=None)
 bot.updating = SimpleNamespace(is_alive=lambda: True)
 store.put("last_update", "2026-11-04")
@@ -282,6 +299,15 @@ check(store.user(ADMIN)["hour"] == 7 and "every day at 7:00" in tg.last(ADMIN), 
 tap(ADMIN, "change:count")
 tap(ADMIN, "count:5")
 check("<b>Papers each time:</b> 5" in tg.last(ADMIN), "change papers per digest: back to the summary")
+tap(ADMIN, "change:days")
+tap(ADMIN, "day:5")
+tap(ADMIN, "day:6")
+tap(ADMIN, "days_done")
+check("<b>When:</b> on weekdays at 7:00" in tg.last(ADMIN), "change the days: back to the summary")
+tap(ADMIN, "day:2")
+tap(ADMIN, "day:4")
+check("on Mon, Tue, Thu" in bot.summary(store.user(ADMIN)), "other days are listed by name")
+store.update_user(ADMIN, days=None)
 tap(ADMIN, "change:sources")
 tap(ADMIN, "src_add")
 check(store.user(ADMIN)["step"] == "journal_review", "adding a journal from the summary")
@@ -316,7 +342,8 @@ check(len(cards) == 3, "3 cards")
 captions = [c["caption"] for c in cards]
 check("replay during sleep" in captions[0] or "Sleep spindles" in captions[0], f"best match first: {captions[0][:60]!r}")
 check(all("Hook:" in c for c in captions), "each card has its hook")
-check(buttons(cards[0])[1] == ["📄 Summary", "📋 Copy", "💼 LinkedIn"], "admin gets the LinkedIn button")
+check(all("💡 Matches <i>" in c for c in captions), f"each card says which interest it matched: {captions[0][-60:]!r}")
+check(buttons(cards[0])[1] == ["📄 Summary", "📋 Copy", "🔗 Similar", "💼 LinkedIn"], "admin gets the LinkedIn button")
 footer = tg.to(ADMIN, "sendMessage")[-1]
 check(footer["text"] == "Want more?" and buttons(footer) == [["➡️ 3 more"]], "a ➡️ 3 more button after the cards")
 tap(ADMIN, "more", message_id=footer["_id"])
@@ -333,7 +360,7 @@ check("every new paper from the past week" in tg.last(ADMIN), "nothing left: say
 
 message(ADMIN, "/settings")
 settings = tg.to(ADMIN, "sendMessage")[-1]
-check("Tap one to change it." in settings["text"] and buttons(settings) == [["Areas", "Keywords", "Sources"], ["Time", "Papers each time"]],
+check("Tap one to change it." in settings["text"] and buttons(settings) == [["Areas", "Keywords", "Sources"], ["Time", "Days", "Papers each time"]],
       "/settings: the same summary, without Start")
 tap(ADMIN, "change:count", message_id=settings["_id"])
 tap(ADMIN, "count:3")
@@ -369,7 +396,7 @@ check(answers[-6:].count("On: Nature") == 1 and "On: Journal of Neuroscience" in
 check(bot.pending_sources == {"pubmed:nature"}, "nobody had Nature: it's fetched now, not tomorrow")
 first = tg.to(ANA, "sendPhoto")
 check(len(first) == 3 and "Dopamine" in first[0]["caption"], f"reward topic -> dopamine paper first: {first[0]['caption'][:50]!r}")
-check(buttons(first[0])[1] == ["📄 Summary", "📋 Copy"], "no LinkedIn button for others")
+check(buttons(first[0])[1] == ["📄 Summary", "📋 Copy", "🔗 Similar"], "no LinkedIn button for others")
 message(ANA, "/tz Mars/Olympus")
 check("don't know that time zone" in tg.last(ANA), "bad time zone refused")
 
@@ -385,6 +412,8 @@ check(gemini.calls["embedded"] - embedded == 1, "only the brain paper was sent f
 check(all(p["pid"] != other["pid"] for p in store.recent(7)), "and never offered")
 message(ANA, "/digest")
 check("Dopamine release encodes reward" in tg.to(ANA, "sendPhoto")[-3]["caption"], "Ana's next paper is Nature's, from a source Ana chose")
+check("💡 Matches <i>Reward, emotion &amp; stress</i> · from your source Nature" in tg.to(ANA, "sendPhoto")[-3]["caption"],
+      "its card says why: the area it matched, and Ana's source")
 memory_fan = {"id": 999, "profile": store.user(ADMIN)["profile"]}  # into hippocampal replay and sleep; nothing sent yet
 picks = digest.pick(store, memory_fan, 3, 7, ["pubmed:nature"])
 check(picks[0]["pid"] == brain["pid"], "a paper from your own sources comes first, even when others match better")
@@ -559,6 +588,81 @@ check(store.paper_by_doi(EXTERNAL["doi"])["vector"] is None, "the looked-up pape
 message(ANA, "/unfollow Jane Smith")
 check(store.follows(ANA) == [] and "Stopped following" in tg.last(ANA), "unfollow")
 
+print("13b. similar papers, favourites, citation files")
+tap(ANA, f"near:{pid}")
+near = tg.to(ANA, "sendMessage")[-6:]
+check("🔗 The closest papers to" in near[0]["text"] and len(near) == 6, "🔗 Similar: a heading and 5 papers")
+check(all(f"like:{pid}" not in json.dumps(m["reply_markup"]) for m in near[1:]), "not the paper itself")
+tap(ANA, f"near:{store.paper_by_doi(EXTERNAL['doi'])['pid']}")
+check(answers[-1] == "I can only compare papers from the last few weeks", "a looked-up paper can't be compared")
+message(ANA, "/popular")
+check("Nothing yet" in tg.last(ANA), "/popular: nothing until two people agree")
+store.record_sent(ANA, pid, "test", None)
+store.run("UPDATE sent SET saved=1 WHERE user_id=? AND pid=?", ANA, pid)  # Ana saved it (section 11 cleared Ana's papers)
+tap(ADMIN, f"like:{pid}")
+message(ANA, "/popular")
+popular = tg.to(ANA, "sendMessage")[-2:]
+check("This week's favourites" in popular[0]["text"] and "👍 1 · 💾 1" in popular[1]["text"], "Ana saved it and the admin liked it: it shows, with counts")
+check("Ana" not in popular[1]["text"] and "Ali" not in popular[1]["text"], "and no names")
+crossref = []
+
+
+def fake_crossref(url, timeout=None):
+    crossref.append(url)
+    if PAPERS[1]["doi"] in url:
+        body = "TY  - JOUR\nTI  - From Crossref\nAU  - Garcia, Maria\nER  - " if "research-info" in url else "@article{Garcia_2026, title={From Crossref}}"
+        return SimpleNamespace(status_code=200, content=body.encode("utf-8"))
+    return SimpleNamespace(status_code=404, content=b"")
+
+
+cite.session = SimpleNamespace(get=fake_crossref)
+tap(ANA, f"save:{store.paper_by_doi(PAPERS[0]['doi'])['pid']}")
+message(ANA, "/export")
+doc = [p for m, p in tg.calls if m == "sendDocument" and p["chat_id"] == ANA][-1]
+name, data = doc["_files"]["document"]
+text = data.decode("utf-8")
+check(name == "saved-papers.ris" and "Zotero, EndNote or Mendeley" in doc["caption"] and "2 saved papers" in doc["caption"], "/export: a .ris file")
+check("TI  - From Crossref" in text and "AU  - Garcia, Maria" in text, "with Crossref's full entry when it has one")
+check("TY  - GENERIC" in text and "AU  - Smith" in text and text.count("ER  - ") == 2, "and the bot's own entry when it doesn't")
+message(ANA, "/export bibtex")
+doc = [p for m, p in tg.calls if m == "sendDocument" and p["chat_id"] == ANA][-1]
+name, data = doc["_files"]["document"]
+check(name == "saved-papers.bib" and data.decode().count("@article{") == 2, "/export bibtex: a .bib file")
+message(BEN, "/export")
+check(not [p for m, p in tg.calls if m == "sendDocument" and p["chat_id"] == BEN], "denied people get nothing")
+store.add_user(555, "Eve", None, "active")
+message(555, "/export")
+check("Nothing saved yet" in tg.last(555), "nothing saved: says so")
+store.delete_user(555)
+
+print("13c. watched topics")
+message(ANA, "/watch dopamine release")
+check(store.watches(ANA) == [(ANA, "dopamine release")] and "Watching <i>dopamine release</i>" in tg.last(ANA), "/watch")
+bot.settings["watches_per_person"] = 1
+message(ANA, "/watch grid cells")
+check("up to 1 topics" in tg.last(ANA) and len(store.watches(ANA)) == 1, "a limit on topics")
+bot.settings["watches_per_person"] = 10
+message(ANA, "/watching")
+check("dopamine release" in tg.last(ANA), "/watching lists them")
+PAPERS.append(paper(30, "Dopamine release in striatum tracks reward", "Striatal dopamine release encodes reward and motivation in mice.",
+                    ["Lopez, C."]))
+PAPERS.append(paper(31, "Cortical layer 6 projections to thalamus", "Layer 6 corticothalamic neurons gate thalamic relay.", ["Usrey, W."]))
+result = digest.daily_update(store, cfg, gemini, alert=bot.send_alert, watched=bot.send_watch)
+watch_texts = [t for t in tg.texts(ANA) if "A new paper on" in t]
+check(result["new"] == 2 and len(watch_texts) == 1 and "<i>dopamine release</i>" in watch_texts[0], "a new paper on it: Ana hears that day")
+check("Dopamine release in striatum tracks reward" in tg.texts(ANA)[tg.texts(ANA).index(watch_texts[0]) + 1], "with the paper")
+check("Cortical layer 6" not in " ".join(tg.texts(ANA)), "not the unrelated one")
+message(ANA, "/unwatch dopamine release")
+check(store.watches(ANA) == [] and "Stopped watching" in tg.last(ANA), "/unwatch")
+
+print("13d. numbers for the admin")
+message(ADMIN, "/stats")
+stats = tg.to(ADMIN, "sendMessage")[-1]["text"]
+check("<b>The last 7 days</b>" in stats and "People: 2 active (2 on Telegram, 0 on Discord)" in stats, f"/stats: {stats[:120]!r}")
+check("Reactions: 👍" in stats and "Gemini: about" in stats, "with reactions and Gemini use")
+message(ANA, "/stats")
+check("I send you a daily digest" in tg.last(ANA), "only for the admin")
+
 print("14. the schedule")
 store.update_user(ADMIN, last_digest="2000-01-01")
 store.update_user(ANA, last_digest="2000-01-01")
@@ -574,6 +678,17 @@ bot.tick(now=morning + timedelta(minutes=5))
 check(len([c for c in tg.calls[sent:] if c[1].get("chat_id") == ANA]) == 0, "not sent twice the same day")
 bot.tick(now=morning + timedelta(hours=1))
 check(store.user(ADMIN)["last_digest"] == "2026-11-04", "08:30 in Toronto: the admin's digest went out")
+message(ANA, "/days")
+tap(ANA, "days:weekdays")
+tap(ANA, "day:2")
+tap(ANA, "days_done")
+check(tg.last(ANA) == "Done: your digest now comes on Mon, Tue, Thu, Fri.", "/days outside setup")
+store.update_user(ANA, last_digest="2000-01-01")
+bot.tick(now=morning)
+check(store.user(ANA)["last_digest"] == "2000-01-01", "Wednesday isn't one of Ana's days: no digest")
+bot.tick(now=morning + timedelta(days=1))
+check(store.user(ANA)["last_digest"] == "2026-11-05", "Thursday is")
+store.update_user(ANA, days=None)
 
 print("15. when updates run")
 started = []
@@ -627,6 +742,16 @@ check(store.user(CARL)["status"] == "active", "and Approve still works")
 check(store.user(ADMIN) is None, "without setting up a digest for the admin")
 message(ADMIN, "/start", first="Ali")
 check(store.user(ADMIN)["is_admin"] and store.user(ADMIN)["status"] == "active", "/start brings the admin back at once")
+
+print("20. buttons only do what they offer")
+carl = store.user(CARL)
+for data in ("count:100000", "count:-3", "hour:99", "hour:x", "tz:99", "tz:-1", "tz:abc", "day:9", "days:bogus"):
+    tap(CARL, data)
+after = store.user(CARL)
+check((after["per_digest"], after["hour"], after["tz"], after["days"]) == (carl["per_digest"], carl["hour"], carl["tz"], carl["days"]),
+      "made-up numbers change nothing")
+tap(CARL, "count:5")
+check(store.user(CARL)["per_digest"] == 5, "while real ones still work")
 
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

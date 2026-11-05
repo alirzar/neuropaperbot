@@ -29,7 +29,7 @@ LIMIT = 2000  # characters in a message
 NO_EMBEDS, EPHEMERAL = 1 << 2, 1 << 6  # message flags: no link previews; only the person sees it
 CANT_MESSAGE = 50007  # Discord's error code when the bot can't message someone (they left the server)
 TICK = "✅ "
-MENUS = {"topic": "Choose your areas", "src": "Choose your sources", "tz": "Choose your time zone"}
+MENUS = {"topic": "Choose your areas", "src": "Choose your sources", "tz": "Choose your time zone", "day": "Choose your days"}
 SINGLE = {"tz"}  # menus where you pick one; in the others you tick any number
 
 log = logging.getLogger("bot")
@@ -191,7 +191,7 @@ def menu_taps(custom_id, values, rows):
     """What a dropdown choice means as taps: the one picked, or each option ticked or unticked."""
     kind = (custom_id.split(":") + [""])[1]  # pick:<kind>:<index>
     if kind in SINGLE:
-        return list(values[:1])
+        return [v for v in values[:1] if v.startswith(f"{kind}:")]  # only what the menu offers
     for row in rows:
         for c in row.get("components", []):
             if c.get("custom_id") == custom_id:
@@ -233,6 +233,16 @@ def photo(uid, png, caption, buttons=None):
         "components": components(buttons), "attachments": [{"id": 0, "filename": "card.png"}],
     }
     msg = call("POST", f"/channels/{channel(uid)}/messages", payload, files={"files[0]": ("card.png", png, "image/png")})
+    return int(msg["id"])
+
+
+def document(uid, data, filename, caption):
+    """A file, such as a citation file, with a caption."""
+    payload = {
+        "content": pieces(markdown(caption))[0], "flags": NO_EMBEDS, "allowed_mentions": {"parse": []},
+        "attachments": [{"id": 0, "filename": filename}],
+    }
+    msg = call("POST", f"/channels/{channel(uid)}/messages", payload, files={"files[0]": (filename, data)})
     return int(msg["id"])
 
 
@@ -284,6 +294,9 @@ class App:
 
     def photo(self, uid, png, caption, buttons=None):
         return photo(uid, png, caption, buttons)
+
+    def document(self, uid, data, filename, caption):
+        return document(uid, data, filename, caption)
 
     def edit(self, uid, message_id, text, buttons=None):
         edit(uid, message_id, text, buttons)

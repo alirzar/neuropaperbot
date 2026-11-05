@@ -11,15 +11,16 @@ Based on [oecs-bot](https://github.com/mcfrank/oecs-bot) by Michael Frank (MIT l
 
 [`scripts/bot.py`](scripts/bot.py) keeps running and talks to everyone who uses it, on Telegram or, once you [add it to Discord](#add-it-to-discord), on Discord:
 
-- **Joining:** someone sends `/start`, and you get **✅ Approve / ❌ Deny**. Once approved, they pick from 12 areas, describe their interests in their own words, choose their sources, and pick a time zone and an hour. Then they see a summary of their choices, can change any part, and tap **✅ Start my digest**: nothing is sent before that. `/settings` shows the same summary anytime.
-- **A daily digest** at their hour: the new papers that suit them best, each as a card with **👍 / 👎** (which tune later picks), **💾 Save**, **📄 Summary** and **📋 Copy**. Your own digest also has **💼 LinkedIn**. A **➡️ 3 more** button under the digest brings the next papers on their list, up to 5 times a day.
+- **Joining:** someone sends `/start`, and you get **✅ Approve / ❌ Deny**. Once approved, they pick from 12 areas, describe their interests in their own words, choose their sources, and pick a time zone, an hour and the days of the week. Then they see a summary of their choices, can change any part, and tap **✅ Start my digest**: nothing is sent before that. `/settings` shows the same summary anytime.
+- **A digest** at their hour, on the days they pick (every day to start with): the new papers that suit them best, each as a card with **👍 / 👎** (which tune later picks), **💾 Save**, **📄 Summary**, **📋 Copy** and **🔗 Similar** (the 5 closest recent papers). A 💡 line on each card says why it was picked: the interest it matched, and whether it came from their sources. Your own digest also has **💼 LinkedIn**. A **➡️ 3 more** button under the digest brings the next papers on their list, up to 5 times a day.
 - **Sources:** `/sources` lists where papers come from: bioRxiv and medRxiv sections, neuroscience journals, and general journals such as Nature, Science and eLife, from which only the brain papers come. Nothing is ticked to start with: each person ticks the ones they want, or none. **➕ Add a journal** takes any journal PubMed indexes, by name, abbreviation or ISSN. The bot checks that it published in the past year, and then offers it to everyone.
-- **On request:** `/find <topic>` searches the last 60 days of papers. Pasting a DOI or a bioRxiv or medRxiv link gets a plain-language summary. `/follow <name>` sends a message when that author publishes, in any PubMed journal or on bioRxiv.
-- **Commands:** `/digest`, `/find`, `/saved`, `/follow`, `/following`, `/unfollow`, `/topics`, `/keywords`, `/sources`, `/time`, `/settings`, `/privacy` and `/stop`; and for you, `/users`.
+- **On request:** `/find <topic>` searches the last 60 days of papers. Pasting a DOI or a bioRxiv or medRxiv link gets a plain-language summary. `/popular` shows this week's papers that at least two people gave 👍 or saved, as counts without names. `/export` sends someone's saved papers as a citation file for Zotero, EndNote or Mendeley (`/export bibtex` for LaTeX), with full details from Crossref.
+- **Alerts:** `/follow <name>` sends a message when that author publishes, in any PubMed journal or on bioRxiv. `/watch <topic>` sends one the day a new paper mentions that topic or is among the week's closest matches to it, up to 3 a day.
+- **Commands:** `/digest`, `/find`, `/popular`, `/saved`, `/export`, `/follow`, `/following`, `/unfollow`, `/watch`, `/watching`, `/unwatch`, `/topics`, `/keywords`, `/sources`, `/time`, `/days`, `/settings`, `/privacy` and `/stop`; and for you, `/users` and `/stats` (people, papers, reactions and Gemini use over the past week).
 
 **How it picks papers.** Every morning at 06:00 UTC it fetches new papers from the base sources (`sources` in `config.json`) and from every source someone has ticked. A source nobody had is fetched right away, the moment someone ticks it. Gemini turns each paper, and each person's topics and keywords, into a "fingerprint" (an embedding), so that similar subjects get similar fingerprints. A person's digest starts with the week's new papers from the sources they ticked, closest to their interests first, nudged toward papers like the ones they gave 👍, away from the 👎 ones, and slightly by Gemini's quality score. When those run out, the best matches from every other source follow, and someone who ticks nothing gets the best matches from everything. From general journals, PubMed sends only papers whose title or abstract mentions the brain or nervous system, and Gemini then sets aside any that aren't really neuroscience, such as a "neural network" for battery materials. Gemini works per paper, not per person, so costs grow with the number of papers rather than people. Summaries are the exception, which is why each person gets 10 a day (you have no limit).
 
-**Privacy.** People's data stays in `data/db/bot.db` on the computer running the bot and is never committed to git: their Telegram or Discord name and ID, their interests and sources, what they were sent, and their 👍/👎, saves and follows. Journals people add are kept without their names. `/privacy` tells people this, and `/stop` deletes everything about them.
+**Privacy.** People's data stays in `data/db/bot.db` on the computer running the bot and is never committed to git: their Telegram or Discord name and ID, their interests and sources, what they were sent, and their 👍/👎, saves, follows and watched topics. Journals people add are kept without their names, and `/popular` shows counts, never who. `/privacy` tells people this, and `/stop` deletes everything about them.
 
 ### Try it on your computer
 
@@ -35,10 +36,16 @@ saved - Papers you saved
 follow - Get a message when an author publishes
 following - Authors you follow
 unfollow - Stop following an author
+watch - Get a message when a new paper is on a topic
+watching - Topics you watch
+unwatch - Stop watching a topic
+popular - This week's most liked and saved papers
+export - Your saved papers as a file for Zotero
 topics - The areas you follow
 keywords - Your interests in your own words
 sources - The journals and preprints you get
 time - When your digest arrives
+days - Which days your digest comes
 settings - Your choices, and changing them
 privacy - What the bot keeps
 stop - Delete your data
@@ -127,7 +134,7 @@ In `config.json`:
 | `bot.search_days`, `bot.keep_days` | How far back `/find` looks, and when old papers are forgotten (saved ones are kept) |
 | `bot.summaries_per_day`, `bot.searches_per_day` | Daily limits per person (searches include journal searches); you have none |
 | `bot.more_per_day` | How many times a day each person can tap **➡️ more**; you have no limit |
-| `bot.follows_per_person` | The most authors one person can follow |
+| `bot.follows_per_person`, `bot.watches_per_person` | The most authors one person can follow, and topics they can watch |
 | `sources` | The base sources: fetched every day whether or not anyone ticks them, so there are always papers to choose from (the GitHub version uses them too) |
 | `more_sources` | The other sources `/sources` offers: `preprints` as `"server:category"` (bioRxiv or medRxiv), `journals` by PubMed abbreviation, and `general_journals`, from which only brain papers come |
 | `topics` | The areas offered at setup: each has a label, and the description its fingerprint is made from |

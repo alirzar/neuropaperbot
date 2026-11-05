@@ -8,6 +8,7 @@ quality score.
 """
 import logging
 import os
+import re
 from datetime import timedelta
 
 import numpy as np
@@ -23,6 +24,11 @@ log = logging.getLogger("bot")
 
 FEEDBACK_WEIGHT = 0.2  # how much 👍 and 👎 move a score (scores are similarities, mostly 0.5 to 0.9)
 QUALITY_WEIGHT = 0.02  # per point of Gemini's 1-10 score away from 5
+# A watched topic matches a new paper that is among the week's closest 1% to it, or that mentions
+# its words and is closer than three quarters of the week's papers. (Short phrases score low on
+# every paper, and each on its own scale, so a fixed cutoff wouldn't do.)
+WATCH_CLOSE, WATCH_MENTIONED = 99, 75  # percentiles
+WATCH_MAX = 3  # messages per watched topic per update
 
 TOPIC_CHECK = (
     '\n\nALSO: give each object a fourth field, "neuro": true if the paper is neuroscience, meaning it studies the '
@@ -54,8 +60,9 @@ def wanted_sources(store, cfg):
     return set(catalog.base_keys(cfg)) | store.chosen_sources()
 
 
-def daily_update(store, cfg, client, alert=None, only=None):
-    """Fetch new papers, score and fingerprint them, and call alert(uid, pid, label) for followed authors.
+def daily_update(store, cfg, client, alert=None, only=None, watched=None):
+    """Fetch new papers, score and fingerprint them, call alert(uid, pid, label) for followed authors
+    and watched(uid, pid, phrase) for watched topics.
 
     It fetches the base sources and every one someone has ticked, over the last bot.recent_days days,
     so every paper that can go in a digest is there. With `only` (a set of source keys) it fetches
@@ -112,6 +119,9 @@ def daily_update(store, cfg, client, alert=None, only=None):
                 for key in set(p.get("author_keys") or []) & follow_keys:
                     for uid, label in store.followers(key):
                         alert(uid, p["pid"], label)
+        if watched:
+            for uid, pid, phrase in watch_matches(store, client, embedding_model(cfg), batch, settings.get("recent_days", 7)):
+                watched(uid, pid, phrase)
     if not only:
         store.drop_sources(wanted)
         store.prune(settings.get("keep_days", 60))
@@ -122,6 +132,54 @@ def daily_update(store, cfg, client, alert=None, only=None):
         len(unique), len(new), off_topic, f"; errors: {errors}" if errors else "",
     )
     return {"fetched": len(unique), "new": len(new), "off_topic": off_topic, "errors": errors}
+
+
+def mentions(p, phrase):
+    """Whether every word of the phrase (three letters or more) is in the paper's title or abstract."""
+    text = f"{p['title']} {p.get('abstract') or ''}".lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", phrase.lower()) if len(w) >= 3]
+    return bool(words) and all(w in text for w in words)
+
+
+def watch_matches(store, client, model, batch, days):
+    """(uid, pid, phrase) for each new paper in `batch` that a watched topic should hear about."""
+    watches = store.watches()
+    if not watches or not batch:
+        return []
+    pool = store.recent(days)  # this week's papers, the new ones included, to set each topic's bar
+    if not pool:
+        return []
+    phrases = sorted({phrase for _, phrase in watches})
+    topics = query_vectors(store, client, model, phrases)
+    week = np.vstack([p["vector"] for p in pool]) @ topics.T
+    close, mentioned = np.percentile(week, WATCH_CLOSE, axis=0), np.percentile(week, WATCH_MENTIONED, axis=0)
+    fresh = [store.paper(p["pid"]) for p in batch]
+    fresh = [p for p in fresh if p and p["vector"] is not None]
+    if not fresh:
+        return []
+    near = np.vstack([p["vector"] for p in fresh]) @ topics.T
+    found = {}
+    for j, phrase in enumerate(phrases):
+        hits = [(near[i, j], p) for i, p in enumerate(fresh)
+                if near[i, j] >= close[j] or (near[i, j] >= mentioned[j] and mentions(p, phrase))]
+        found[phrase] = [p["pid"] for _, p in sorted(hits, key=lambda h: -h[0])[:WATCH_MAX]]
+    return [(uid, pid, phrase) for uid, phrase in watches for pid in found.get(phrase, [])]
+
+
+def similar(store, paper, days, n):
+    """The n papers from the last `days` days closest to this one (which needs a fingerprint)."""
+    papers = [p for p in store.recent(days) if p["pid"] != paper["pid"]]
+    if not papers or paper.get("vector") is None:
+        return []
+    closeness = np.vstack([p["vector"] for p in papers]) @ paper["vector"][0]
+    return [papers[i] for i in np.argsort(-closeness, kind="stable")[:n]]
+
+
+def best_interest(user, paper):
+    """Which of this person's interests (an index into their fingerprints) the paper matches best."""
+    if user["profile"] is None or paper.get("vector") is None:
+        return None
+    return int(np.argmax(user["profile"] @ paper["vector"][0]))
 
 
 def scores_for(store, user, papers):
