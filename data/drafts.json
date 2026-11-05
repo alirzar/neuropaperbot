@@ -176,5 +176,89 @@
       "linkedin"
     ],
     "tg_copy_message_id": 34
+  },
+  {
+    "id": "781c746cf4",
+    "status": "sent",
+    "doi": "10.64898/2026.11.04.763721",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Social vision expands into auditory cortices of people born deaf: evidence from naturalistic film and encoding models",
+    "authors": [
+      "Zimmermann",
+      "Szwed",
+      "Isik"
+    ],
+    "date": "2026-11-05",
+    "link": "https://doi.org/10.64898/2026.11.04.763721",
+    "license": "cc_by",
+    "abstract": "Comparing deaf and hearing adults provides insight into the contribution of experience to function of auditory cortical networks. We used naturalistic fMRI and voxel-wise encoding to measure information processing in auditory networks of deaf (n=24) and hearing (n=22) adults who watched a 35-minute silent animated film. Unlike simpler stimuli, naturalistic films are rich in a broad range of perceptual, affective, and social features, including motion, dynamic social interactions, and Theory of Mind. Machine vision algorithms and human coding were used to densely annotate visual and social film features. In both groups we observed a right-lateralized processing hierarchy with encoding of low-level visual features in early visual areas, social visual features along the superior temporal sulcus (STS) and Theory of Mind in temporoparietal junction. In deaf participants, auditory cortices showed enhanced encoding of a broad range of visual information, from low level motion to Theory of Mind. In higher order auditory networks, social interactions emerging as the strongest predictor of neural activity in deaf people and showed the strongest enhancement in deafness. Auditory networks of deaf adults showed systematic anatomical organization within and across hemispheres. Within the right hemisphere, higher-order auditory regions neighboring the STS preferentially responded to social visual features whereas lower-level visual features were represented broadly across the auditory hierarchy. These results suggest that proximity and connectivity principles govern anatomical expansion of information encoding in sensory loss.",
+    "snippet": "Comparing deaf and hearing adults provides insight into the contribution of experience to function of auditory cortical networks. We used naturalistic fMRI and voxel-wise encoding to measure information processing in auditory networks of deaf (n=24) and hearing (n=22) adults who watched a…",
+    "score": 8,
+    "reason": "Reveals expansion of social vision into auditory cortices in congenitally deaf adults.",
+    "hook": "Auditory cortices in deaf adults encode complex visual information, with social interactions emerging as strong predictors of neural activity.",
+    "created_at": "2026-11-05T16:31:53+00:00",
+    "tg_message_id": 35,
+    "sent_at": "2026-11-05T16:33:40+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 36
+  },
+  {
+    "id": "e123afd077",
+    "status": "sent",
+    "doi": "10.64898/2026.11.04.764111",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "ClearGel: a thermoresponsive hydrogel for chronic, near-millimeter two-photon imaging through the intact skull",
+    "authors": [
+      "Liu",
+      "Gao",
+      "He"
+    ],
+    "date": "2026-11-05",
+    "link": "https://doi.org/10.64898/2026.11.04.764111",
+    "license": "cc_no",
+    "abstract": "The intact skull remains a fundamental barrier to high-resolution two-photon neuroimaging in live mice. Existing skull-clearing methods, however, cannot simultaneously provide deep cortical access, spatial selectivity, reversibility, and biological safety. Here we introduce ClearGel, a thermoresponsive hydrogel that undergoes rapid in situ gelation upon contact with the skull, confining the clearing agents to the targeted region while sustaining their release over time. ClearGel routinely enables two-photon imaging down to approximately 800 m through the intact skull-a depth statistically equivalent to open-skull windows and substantially surpassing all prior approaches. It supports user-defined clearing patterns from focal sites to whole-skull coverage, allows repeated imaging over 14 days through a reversible optical interface, and, critically, enables awake functional imaging of both neuronal Ca2+ activity and the more elusive cAMP dynamics at single-cell resolution. ClearGel requires only simple topical application-no craniotomy or skull thinning-and provides a minimally invasive, chronic-compatible optical window for longitudinal studies of cortical function in behaving mice.",
+    "snippet": "The intact skull remains a fundamental barrier to high-resolution two-photon neuroimaging in live mice. Existing skull-clearing methods, however, cannot simultaneously provide deep cortical access, spatial selectivity, reversibility, and biological safety. Here we introduce ClearGel, a…",
+    "score": 8,
+    "reason": "Introduces a thermoresponsive hydrogel enabling deep two-photon imaging through the intact skull.",
+    "hook": "A thermoresponsive hydrogel applied topically to the intact mouse skull enables near-millimeter deep, chronic two-photon imaging of cortical calcium and cAMP dynamics without a craniotomy.",
+    "created_at": "2026-11-05T16:31:53+00:00",
+    "tg_message_id": 37,
+    "sent_at": "2026-11-05T16:33:42+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 38
+  },
+  {
+    "id": "822cf2a636",
+    "status": "sent",
+    "doi": "10.1038/s41593-026-02496-6",
+    "source": "pubmed",
+    "venue": "Nature Neuroscience",
+    "title": "Single-neuron encoding of rapidly learned visual information reshapes human perception",
+    "authors": [
+      "Armendariz",
+      "Blumberg",
+      "Singer"
+    ],
+    "date": "2026-11-04",
+    "link": "https://doi.org/10.1038/s41593-026-02496-6",
+    "license": null,
+    "abstract": "Humans can swiftly learn to recognize visual objects after minimal exposure. Integrating new information with existing knowledge requires forming enduring neuronal representations to enable future recognition. Yet, the neuronal mechanisms in the human brain underlying such rapid perceptual changes remain unclear. Here we recorded single-neuron activity in occipital cortex (OC) and medial temporal lobe (MTL) regions as participants rapidly learned to recognize degraded images. OC and MTL neurons modulated their activity to encode newly learned visual information and reshape perception. Population decoding revealed that OC neurons required additional processing time to resolve the identity of learned images, with delayed neuronal responses in the MTL. Our findings suggest that OC supports recognition after rapid learning via extensive recurrent processing, potentially involving higher-order neocortical areas, without relying on feedback from MTL. These results provide mechanistic constraints for biologically plausible models of visual recognition and few-shot visual learning.",
+    "snippet": "Humans can swiftly learn to recognize visual objects after minimal exposure. Integrating new information with existing knowledge requires forming enduring neuronal representations to enable future recognition. Yet, the neuronal mechanisms in the human brain underlying such rapid perceptual changes…",
+    "score": 9,
+    "reason": "Major finding on human single-neuron mechanisms of rapid visual learning and perception.",
+    "hook": "Neurons in the human occipital cortex and medial temporal lobe modulate their activity to encode rapidly learned visual information and reshape perception.",
+    "created_at": "2026-11-05T16:31:53+00:00",
+    "tg_message_id": 39,
+    "sent_at": "2026-11-05T16:33:43+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 40
   }
 ]
