@@ -1,7 +1,7 @@
 [
   {
     "id": "83239b65af",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.02.763564",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -28,7 +28,7 @@
   },
   {
     "id": "2c1be5fa70",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.02.763631",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -260,5 +260,89 @@
       "linkedin"
     ],
     "tg_copy_message_id": 40
+  },
+  {
+    "id": "a904266645",
+    "status": "sent",
+    "doi": "10.64898/2026.11.04.764097",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Distinct lifespan trajectories of cortical intrinsic timescales and neural oscillations",
+    "authors": [
+      "Liu",
+      "Harris",
+      "Lu"
+    ],
+    "date": "2026-11-06",
+    "link": "https://doi.org/10.64898/2026.11.04.764097",
+    "license": "cc_by",
+    "abstract": "The brain integrates information over time through the persistence of neural activity, yet how this persistence changes across the human lifespan and the mechanisms underlying these changes remain unclear. Using resting-state magnetoencephalography from three independent cohorts (n = 1,156; ages 6-88 years), we systematically examined lifespan changes in neural temporal dynamics, focusing on cortical intrinsic timescales and alpha oscillatory frequency. We found that cortical intrinsic timescales shortened from approximately 29 ms in childhood to 9 ms in late adulthood, with the steepest decline occurring before age 30. This compression was reproducible across cohorts and observed in all cortical regions, while the sensory-to-association hierarchy of timescales remained preserved throughout life. By contrast, alpha frequency followed a distinct trajectory, peaking in early adulthood before declining after midlife. Individualized corticothalamic models linked timescale compression to stronger intrathalamic inhibition, whereas increased conduction delays partly accounted for alpha slowing. Further network simulations indicated that intrinsic timescales primarily reflect collective network dynamics rather than single-neuron kinetics. Together, these findings reveal distinct lifespan trajectories of neural persistence and oscillatory rhythms, implicating collective corticothalamic dynamics in the temporal organization of the human brain across development and ageing.",
+    "snippet": "The brain integrates information over time through the persistence of neural activity, yet how this persistence changes across the human lifespan and the mechanisms underlying these changes remain unclear. Using resting-state magnetoencephalography from three independent cohorts (n = 1,156; ages…",
+    "score": 9,
+    "reason": "Large-scale MEG study tracking distinct lifespan trajectories of cortical intrinsic timescales and rhythms.",
+    "hook": "Cortical intrinsic timescales shorten sharply from childhood to late adulthood, while alpha oscillations follow a distinct lifespan trajectory peaking in early adulthood.",
+    "created_at": "2026-11-06T19:32:38+00:00",
+    "tg_message_id": 48,
+    "sent_at": "2026-11-06T19:33:14+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 49
+  },
+  {
+    "id": "dac79e0a67",
+    "status": "sent",
+    "doi": "10.64898/2026.11.05.764596",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "A biomimetic deep encoder for auditory restoration by cortical stimulation",
+    "authors": [
+      "Lamothe",
+      "Verdier",
+      "Caris"
+    ],
+    "date": "2026-11-06",
+    "link": "https://doi.org/10.64898/2026.11.05.764596",
+    "license": "cc_by_nc",
+    "abstract": "Cochlear and auditory brainstem implants are the primary treatments for profound deafness. However, the inherently low resolution of electrical stimulation used by these devices limits information transfer to a small number of independent stimulation channels and results in perceptual difficulties. An alternative approach is to target the auditory cortex, a brain region large enough to accommodate hundreds of stimulation channels and whose stimulation evokes sound percepts. Although modern brain interfaces offer large channel counts and spatial resolution, developing encoding algorithms capable of accurately transmitting interpretable sound information remains challenging. Here we introduce Braincodec, a deep network that optimizes both sound information transmission and the alignment of stimulation patterns with the spatial, temporal, and high-level properties of the auditory cortex neural code. Braincodec operates online and requires only a few hundred channels to transmit sufficient information for the reconstruction of natural sounds with high fidelity, a performance inaccessible to cochlear implant encoders. Moreover, mice equipped with a Braincodec-driven auditory cortical prosthesis matched the accuracy of non-implanted mice in discriminating real sounds. Braincodec therefore enables the development of high-throughput cortical neuroprosthetics with the potential to overcome the limitations of current auditory implants and provides a generic framework applicable to other sensory modalities.",
+    "snippet": "Cochlear and auditory brainstem implants are the primary treatments for profound deafness. However, the inherently low resolution of electrical stimulation used by these devices limits information transfer to a small number of independent stimulation channels and results in perceptual…",
+    "score": 9,
+    "reason": "Introduces a biomimetic deep encoder enabling high-fidelity auditory restoration via cortical stimulation.",
+    "hook": "A deep neural network translates natural sounds into cortical stimulation patterns that allow mice to discriminate auditory signals as accurately as unimpaired animals.",
+    "created_at": "2026-11-06T19:32:38+00:00",
+    "tg_message_id": 50,
+    "sent_at": "2026-11-06T19:33:15+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 51
+  },
+  {
+    "id": "0589aca902",
+    "status": "sent",
+    "doi": "10.1016/j.neuron.2026.10.008",
+    "source": "pubmed",
+    "venue": "Neuron",
+    "title": "Opposing excitatory and inhibitory synaptic pathologies drive ZC4H2-associated intellectual disability",
+    "authors": [
+      "Ma",
+      "Wan",
+      "Li"
+    ],
+    "date": "2026-11-05",
+    "link": "https://doi.org/10.1016/j.neuron.2026.10.008",
+    "license": null,
+    "abstract": "Understanding genotype-phenotype correlations is critical for precision medicine, yet patients carrying mutations in the same gene are often classified under one disorder and treated alike, despite potentially opposite responses to therapy. ZC4H2-associated rare disorder (ZARD) is an X-linked neurodevelopmental condition caused by diverse mutations across ZC4H2. Here, we show that distinct ZC4H2 mutations drive intellectual disability through opposing synaptic mechanisms. The gain-of-function mutation ZC4H2L66H enhances GABAA receptor (GABAAR) degradation, impairing inhibitory synaptic transmission and plasticity. By contrast, the loss-of-function mutation ZC4H2R213W increases AMPA receptor (AMPAR) stability and dysregulates excitatory synaptic activity. Despite these diametrically opposed synaptic pathologies, ZC4H2L66H/y and ZC4H2R213W/y knockin mice exhibit comparable cognitive deficits. Importantly, muscimol, a GABAAR agonist, specifically rescues deficits in ZC4H2L66H/y mice, whereas the AMPAR antagonist perampanel rescues ZC4H2R213W/y mice. These findings demonstrate that opposing synaptic etiologies can underlie a single genetic disorder and highlight pathomechanism-based stratification for targeted therapeutic strategies.",
+    "snippet": "Understanding genotype-phenotype correlations is critical for precision medicine, yet patients carrying mutations in the same gene are often classified under one disorder and treated alike, despite potentially opposite responses to therapy. ZC4H2-associated rare disorder (ZARD) is an X-linked…",
+    "score": 9,
+    "reason": "Exceptional translational study showing opposing synaptic pathologies drive the same intellectual disability syndrome.",
+    "hook": "Different mutations in the same gene cause intellectual disability via opposing synaptic mechanisms, yet both respond to targeted pharmacological interventions.",
+    "created_at": "2026-11-06T19:32:38+00:00",
+    "tg_message_id": 52,
+    "sent_at": "2026-11-06T19:33:16+00:00",
+    "buttons_for": [
+      "linkedin"
+    ],
+    "tg_copy_message_id": 53
   }
 ]
