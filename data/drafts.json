@@ -95,7 +95,7 @@
   },
   {
     "id": "74ba093351",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.01.763548",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -123,7 +123,7 @@
   },
   {
     "id": "8f3abbb9ef",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.02.763697",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -151,7 +151,7 @@
   },
   {
     "id": "bcfeb5d716",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.1016/j.neuron.2026.09.028",
     "source": "pubmed",
     "venue": "Neuron",
