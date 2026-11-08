@@ -179,7 +179,7 @@
   },
   {
     "id": "781c746cf4",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.04.763721",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -207,7 +207,7 @@
   },
   {
     "id": "e123afd077",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.64898/2026.11.04.764111",
     "source": "biorxiv",
     "venue": "bioRxiv preprint",
@@ -235,7 +235,7 @@
   },
   {
     "id": "822cf2a636",
-    "status": "sent",
+    "status": "expired",
     "doi": "10.1038/s41593-026-02496-6",
     "source": "pubmed",
     "venue": "Nature Neuroscience",
