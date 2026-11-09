@@ -344,5 +344,71 @@
       "linkedin"
     ],
     "tg_copy_message_id": 53
+  },
+  {
+    "id": "3870324d3d",
+    "status": "ready",
+    "doi": "10.64898/2026.11.05.764682",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "Measuring neuronal input-output operations in vivo with random access projection microscopy",
+    "authors": [
+      "Xie",
+      "Seyedolmohadesin",
+      "He"
+    ],
+    "date": "2026-11-06",
+    "link": "https://doi.org/10.64898/2026.11.05.764682",
+    "license": "cc_by",
+    "abstract": "Neurons transform thousands of synaptic inputs into spiking output, and understanding this transformation requires measuring many submicron synapses at millisecond timescales in vivo. Here we present SLAP2, a two-photon random access projection microscope with no per-target access time cost, yielding over 5-fold faster imaging than existing methods, and performant real-time hardware motion correction. Flexible scanning modes enable measurement of hundreds of synapses at ~200 Hz, >800 synapses volumetrically at 50-100 Hz, and compartment-resolved dendritic voltage at 2-10 kHz in behaving mice. Simultaneous dendritic glutamate and somatic calcium imaging in visual cortex pyramidal neurons revealed nonlinear input-output amplification of stimulus onset and preferred stimulus orientation responses. Amplified features are associated with spatially organized inputs and stronger trial-to-trial coupling between synaptic activity and somatic output. These measurements establish SLAP2 as a powerful tool for recording intricate patterns of subcellular fluorescence dynamics in behaving animals.",
+    "snippet": "Neurons transform thousands of synaptic inputs into spiking output, and understanding this transformation requires measuring many submicron synapses at millisecond timescales in vivo. Here we present SLAP2, a two-photon random access projection microscope with no per-target access time cost…",
+    "score": 10,
+    "reason": "Major technical advance in high-speed random access microscopy revealing in vivo dendritic input-output operations.",
+    "hook": "Simultaneous imaging of dendritic glutamate and somatic calcium in behaving mice reveals nonlinear input-output amplification tied to spatially organized synaptic inputs.",
+    "created_at": "2026-11-09T18:55:05+00:00"
+  },
+  {
+    "id": "a20669b7d4",
+    "status": "ready",
+    "doi": "10.64898/2026.11.06.764863",
+    "source": "biorxiv",
+    "venue": "bioRxiv preprint",
+    "title": "The mouse midbrain periaqueductal gray is organized into target-specific output populations",
+    "authors": [
+      "Strosche",
+      "Tamaki",
+      "Mader"
+    ],
+    "date": "2026-11-09",
+    "link": "https://doi.org/10.64898/2026.11.06.764863",
+    "license": "cc_by",
+    "abstract": "How brains select between behaviours and coordinate their execution is a central question in neuroscience. The vertebrate periaqueductal gray (PAG) controls a remarkable range of instinctive behaviours, from escape and freezing to hunting, vocalization, and micturition. Its columnar organization, the classical framework for mapping these functions, cannot explain how one region controls so many, often mutually exclusive, behaviours. To determine how PAG output is organized, we generated a whole-brain, column- and cell-type-specific synaptic projection atlas of the mouse PAG, showing distinct dorsal and ventral outputs and dense within-PAG connectivity. Retrograde tracing from four motor-related target regions identified segregated PAG populations, biased towards, but not confined to, individual columns. Channelrhodopsin-2-assisted circuit mapping showed that one such population, projecting to the cuneiform nucleus, provides substantial local collaterals, positioned to shape ongoing PAG activity. These findings uncover a modular output architecture that extends the columnar framework, offering a circuit logic for how one brain region produces diverse behaviours.",
+    "snippet": "How brains select between behaviours and coordinate their execution is a central question in neuroscience. The vertebrate periaqueductal gray (PAG) controls a remarkable range of instinctive behaviours, from escape and freezing to hunting, vocalization, and micturition. Its columnar organization…",
+    "score": 9,
+    "reason": "Maps a comprehensive, target-specific output architecture of the mouse periaqueductal gray for behavior.",
+    "hook": "Mouse periaqueductal gray projection mapping reveals segregated output populations that extend classical columns, suggesting how one region coordinates diverse instinctive behaviours.",
+    "created_at": "2026-11-09T18:55:05+00:00"
+  },
+  {
+    "id": "22ee8ca4f6",
+    "status": "ready",
+    "doi": "10.1523/JNEUROSCI.1110-26.2026",
+    "source": "pubmed",
+    "venue": "Journal of Neuroscience",
+    "title": "Learning rapidly reshapes brain microstructure: evidence from dense temporal sampling of diffusion MRI",
+    "authors": [
+      "Kumral",
+      "Lenders",
+      "Schönauer"
+    ],
+    "date": "2026-11-06",
+    "link": "https://doi.org/10.1523/JNEUROSCI.1110-26.2026",
+    "license": null,
+    "abstract": "Learning is associated with rapid microstructural changes in the human brain, yet the precise temporal dynamics of these changes remain unclear. Using dense temporal sampling of diffusion-weighted MRI (DW-MRI) combined with task-based fMRI, we assessed microstructural changes throughout a declarative learning paradigm and subsequent rest. Seventy-four participants (36 females) learned image-location associations across four encoding-retrieval repetitions while undergoing interleaved functional and DW-MRI acquisitions. A matched control group (N=37, 21 females) underwent a similar imaging protocol without learning. Dense sampling of DW-MRI acquisitions (2146 images across 22 time points in 127 min) revealed that learning-induced mean diffusivity (MD) decreases emerged shortly after learning onset and continued to develop during post-learning rest. The most robust change was localized to the left middle occipital/temporal gyrus, a region also showing functional activation during encoding and retrieval. Linear mixed-effects modeling further confirmed a significant group-by-time interaction, with MD reductions in the left middle occipital/temporal gyrus emerging as early as ≈7 min after learning onset, becoming robust by ≈35-40 min, and persisting throughout the extended post-learning period, while controls showed no changes. Our findings demonstrate that learning-related microstructural plasticity unfolds continuously from encoding to offline consolidation, with learning-induced structural changes emerging in functionally engaged regions. Dense temporal sampling of DW-MRI offers a powerful approach to bridge functional activation and structural remodeling, providing evidence of when and where experience-dependent plasticity occurs during memory formation.Significance Statement How quickly does the brain's structure change when we learn? Using dense temporal sampling of diffusion-weighted MRI (DW-MRI; 2146 images) across more than 2 hours, we show that microstructural plasticity arises rapidly during learning and continues to develop during post-learning rest. These learning-induced changes are spatially precise and overlap with task-related functional activity. By capturing the entire progression of microstructural plasticity across the learning process, rather than just before and after a learning paradigm, our study provides insights into when and where learning-induced plasticity occurs, demonstrating that memory formation involves rapid, ongoing microstructural changes in functionally engaged regions.",
+    "snippet": "Learning is associated with rapid microstructural changes in the human brain, yet the precise temporal dynamics of these changes remain unclear. Using dense temporal sampling of diffusion-weighted MRI (DW-MRI) combined with task-based fMRI, we assessed microstructural changes throughout a…",
+    "score": 8,
+    "reason": "Demonstrates surprisingly rapid structural brain changes during learning using dense MRI.",
+    "hook": "Diffusion MRI tracking reveals that human brain tissue microstructure changes within minutes of learning onset, with structural shifts persisting into rest periods in task-active regions.",
+    "created_at": "2026-11-09T18:55:05+00:00"
   }
 ]
