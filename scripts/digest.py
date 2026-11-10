@@ -9,12 +9,12 @@ quality score.
 import logging
 import os
 import re
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 
 import catalog
-from common import describe, gemini_models, now_utc
+from common import describe, gemini_models, iso, now_utc
 from fetch_papers import fetch_sources, search_pubmed
 from generate_summaries import load_prompt as load_hook_prompt
 from generate_summaries import make_hooks
@@ -32,6 +32,7 @@ QUALITY_WEIGHT = 0.02  # per point of Gemini's 1-10 score away from 5
 WATCH_CLOSE, WATCH_MENTIONED = 99, 75  # percentiles
 WATCH_MAX = 3  # messages per watched topic per update
 HOOKS_MAX = 400  # hooks written ahead per update (20 per Gemini request)
+BACKFILL_WEEK = 7  # days fetched per step when filling in older papers
 
 TOPIC_CHECK = (
     '\n\nALSO: give each object a fourth field, "neuro": true if the paper is neuroscience, meaning it studies the '
@@ -112,7 +113,7 @@ def daily_update(store, cfg, client, alert=None, only=None, watched=None):
             p["pid"] = store.add_paper(p, quality=score.get("score"), reason=score.get("reason"), hidden=hidden)
 
     # Fingerprints, a batch at a time, for every new paper and any a failed run left without one.
-    waiting = store.unembedded()
+    waiting = store.unembedded(since=iso(now_utc() - timedelta(days=settings.get("recent_days", 7) + 1)))
     for i in range(0, len(waiting), BATCH):
         batch = waiting[i : i + BATCH]
         for p, vector in zip(batch, embed(client, embedding_model(cfg), [paper_text(p) for p in batch], "RETRIEVAL_DOCUMENT")):
@@ -145,6 +146,81 @@ def daily_update(store, cfg, client, alert=None, only=None, watched=None):
         len(unique), len(new), off_topic, f"; errors: {errors}" if errors else "",
     )
     return {"fetched": len(unique), "new": len(new), "off_topic": off_topic, "errors": errors}
+
+
+# ---------- filling in older papers ----------
+def when_new(p, fallback):
+    """When an older paper counts from: its own date (at noon UTC), so it only shows for ranges that reach it."""
+    try:
+        day = date.fromisoformat((p.get("date") or "")[:10])
+    except ValueError:
+        day = fallback
+    return datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).isoformat(timespec="seconds")
+
+
+def backfill_step(store, cfg, client, budget):
+    """One step of filling in the past year (bot.backfill_days): first fingerprints for older papers still
+    waiting, then the next older week of papers from every source being fetched. At most `budget`
+    fingerprints. Returns (fingerprints made, whether everything is filled in)."""
+    settings = cfg.get("bot", {})
+    target = min(settings.get("backfill_days", 0), settings.get("keep_days", 90))
+    today = now_utc().date()
+    oldest = today - timedelta(days=target)
+    recent = today - timedelta(days=settings.get("recent_days", 7))
+    cutoff = iso(datetime(recent.year, recent.month, recent.day, tzinfo=timezone.utc))
+    if target <= 0:
+        return 0, True
+    made = fingerprint_older(store, cfg, client, cutoff, budget)
+    if made or budget <= 0:
+        return made, False
+    next_end = date.fromisoformat(store.get("backfill_next") or recent.isoformat())
+    if next_end <= oldest:
+        return 0, True
+    start = max(next_end - timedelta(days=BACKFILL_WEEK), oldest)
+    wanted = wanted_sources(store, cfg)
+    papers, errors = fetch_sources([s for s in catalog.sources(cfg, store) if s["key"] in wanted], start,
+                                   next_end - timedelta(days=1), cfg["sources"].get("pubmed", {}))
+    if errors:
+        raise RuntimeError(f"filling in {start}: {errors}")  # try this week again later
+    new = [p for p in papers if not store.has_paper(p["doi"])]
+    if new:
+        try:
+            scores = score_papers(client, gemini_models(cfg), load_ranking_prompt() + TOPIC_CHECK, new, TopicScore)
+        except Exception as exc:
+            log.warning("Filling in %s: no scores (%s)", start, describe(exc))
+            scores = {}
+        for p in new:
+            score = scores.get(p["doi"].lower(), {})
+            hidden = bool(p.get("broad") and score.get("neuro") is False)
+            store.add_paper(p, quality=score.get("score"), reason=score.get("reason"), hidden=hidden,
+                            added_at=when_new(p, next_end - timedelta(days=1)))
+    store.put("backfill_next", start.isoformat())
+    log.info("Filling in: %s to %s, %d new papers", start, next_end - timedelta(days=1), len(new))
+    return fingerprint_older(store, cfg, client, cutoff, budget), False
+
+
+def fingerprint_older(store, cfg, client, cutoff, budget):
+    """Fingerprints for up to `budget` older papers waiting for one (newest first); returns how many."""
+    waiting = store.unembedded(before=cutoff, limit=max(budget, 0))
+    for i in range(0, len(waiting), BATCH):
+        batch = waiting[i : i + BATCH]
+        for p, vector in zip(batch, embed(client, embedding_model(cfg), [paper_text(p) for p in batch], "RETRIEVAL_DOCUMENT")):
+            store.set_vector(p["pid"], vector)
+    return len(waiting)
+
+
+def history_start(store, cfg):
+    """The date from which the bot has every paper fingerprinted: as far back as ranges can honestly reach."""
+    settings = cfg.get("bot", {})
+    today = now_utc().date()
+    recent = today - timedelta(days=settings.get("recent_days", 7))
+    filled = store.get("backfill_next")
+    oldest = store.oldest_paper()
+    start = date.fromisoformat(filled) if filled else (date.fromisoformat(oldest[:10]) if oldest else today)
+    waiting = store.newest_unembedded(iso(datetime(recent.year, recent.month, recent.day, tzinfo=timezone.utc)))
+    if waiting:  # fetched, but not all fingerprinted yet
+        start = max(start, date.fromisoformat(waiting[:10]) + timedelta(days=1))
+    return min(start, recent)
 
 
 def mentions(p, phrase):
@@ -215,12 +291,12 @@ def pick(store, user, n, days, mine=()):
     """The n papers from the last `days` days this person hasn't been sent yet: ones from their own
     sources (mine, a list of source keys) first, best match first, then the best of the rest."""
     already = store.sent_pids(user["id"])
-    papers = [p for p in store.recent(days) if p["pid"] not in already]
+    papers = [p for p in store.candidates(days) if p["pid"] not in already]  # just what ranking needs: quick for a year
     if not papers:
         return []
     scores, mine = scores_for(store, user, papers), set(mine)
     order = sorted(range(len(papers)), key=lambda i: (papers[i].get("src") not in mine, -scores[i]))
-    return [papers[i] for i in order[:n]]
+    return [store.paper(papers[i]["pid"]) for i in order[:n]]
 
 
 def search(store, client, model, query, days, n):

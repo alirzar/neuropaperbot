@@ -185,7 +185,8 @@ class Store:
     def has_paper(self, doi):
         return self.run("SELECT 1 FROM papers WHERE doi=?", doi.lower()).fetchone() is not None
 
-    def add_paper(self, p, vector=None, quality=None, reason=None, hidden=False):
+    def add_paper(self, p, vector=None, quality=None, reason=None, hidden=False, added_at=None):
+        """Save a paper; added_at is when it counts as new (now, or its own date for older papers filled in)."""
         pid = short_id(p["doi"])
         self.run(
             "INSERT OR IGNORE INTO papers(pid, doi, source, venue, src, title, authors, author_keys, date, link, abstract,"
@@ -193,7 +194,7 @@ class Store:
             pid, p["doi"].lower(), p.get("source"), p.get("venue"), p.get("src"), p["title"],
             json.dumps(p.get("authors") or []), json.dumps(p.get("author_keys") or []), p.get("date"), p.get("link"),
             p.get("abstract"), p.get("license"), quality, reason, int(bool(hidden)),
-            None if vector is None else pack(vector), iso(),
+            None if vector is None else pack(vector), added_at or iso(),
         )
         return pid
 
@@ -212,9 +213,29 @@ class Store:
     def set_vector(self, pid, vector):
         self.run("UPDATE papers SET vector=? WHERE pid=?", pack(vector), pid)
 
-    def unembedded(self):
-        """Papers waiting for their fingerprint."""
-        return [_paper(r) for r in self.run("SELECT * FROM papers WHERE vector IS NULL AND hidden=0 ORDER BY added_at")]
+    def unembedded(self, since=None, before=None, limit=-1):
+        """Papers waiting for their fingerprint, newest first: all of them, or those added since or before a time."""
+        rows = self.run(
+            "SELECT * FROM papers WHERE vector IS NULL AND hidden=0 AND added_at>=? AND added_at<? ORDER BY added_at DESC LIMIT ?",
+            since or "", before or "9999", limit,
+        )
+        return [_paper(r) for r in rows]
+
+    def newest_unembedded(self, before):
+        """When the newest paper added before `before` that still waits for its fingerprint counts from, or None."""
+        row = self.run("SELECT MAX(added_at) FROM papers WHERE vector IS NULL AND hidden=0 AND added_at<?", before).fetchone()
+        return row[0] if row else None
+
+    def oldest_paper(self):
+        """When the oldest fingerprinted paper counts from, or None."""
+        return self.run("SELECT MIN(added_at) FROM papers WHERE vector IS NOT NULL AND hidden=0").fetchone()[0]
+
+    def candidates(self, days):
+        """Just what ranking needs (pid, src, quality, vector) for the papers of the last `days` days:
+        quick even for a year of papers."""
+        since = iso(now_utc() - timedelta(days=days))
+        rows = self.run("SELECT pid, src, quality, vector FROM papers WHERE added_at>=? AND vector IS NOT NULL AND hidden=0", since)
+        return [{"pid": r[0], "src": r[1], "quality": r[2], "vector": unpack(r[3])} for r in rows]
 
     def recent(self, days):
         """Papers added in the last `days` days that have a fingerprint."""

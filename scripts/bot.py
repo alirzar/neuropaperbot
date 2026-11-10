@@ -54,6 +54,8 @@ DEFAULTS = {  # overridden by the "bot" section of config.json
     "recent_days": 7,
     "search_days": 60,
     "keep_days": 90,
+    "backfill_days": 0,  # how far back to fill in older papers (0: don't)
+    "backfill_per_day": 500,  # fingerprints a day for that, leaving the rest of Gemini's free tier for everything else
     "summaries_per_day": 10,
     "searches_per_day": 30,
     "follows_per_person": 20,
@@ -82,8 +84,11 @@ HOURS = [6, 7, 8, 9, 10, 12, 14, 17, 20]
 COUNTS = list(range(1, 11))  # papers per digest people can pick
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python's weekday() order
 EVERY_DAY, WEEKDAYS = list(range(7)), list(range(5))
-RANGES = {7: "the past week", 14: "the past 2 weeks", 30: "the past month", 60: "the past 2 months"}  # how far back
-RANGE_BUTTONS = {7: "This week", 14: "2 weeks", 30: "A month", 60: "2 months"}
+RANGES = {  # how far back people's papers can go; the longer ones once the bot has filled them in
+    7: "the past week", 14: "the past 2 weeks", 30: "the past month", 60: "the past 2 months",
+    182: "the past 6 months", 365: "the past year",
+}
+RANGE_BUTTONS = {7: "This week", 14: "2 weeks", 30: "A month", 60: "2 months", 182: "6 months", 365: "A year"}
 
 HELP = """I send you a daily digest of new neuroscience papers picked for your interests.
 
@@ -202,6 +207,8 @@ class Bot:
         self.embedding_model = digest.embedding_model(cfg)
         self.updating = None  # the update's thread, while it runs
         self.update_tried_at = None  # kept in memory, so a restart tries again straight away
+        self.backfill_wait = None  # after a failed step of filling in older papers: when to try again
+        self.backfill_done = False
         self.pending_sources = set()  # sources someone just turned on that nobody had: fetched at the next tick
         self.found = {}  # each person's latest journal search, by button ID
 
@@ -704,7 +711,8 @@ class Bot:
 
     def ranges(self):
         """The ranges people can pick: up to as far back as the bot keeps papers."""
-        return [days for days in RANGES if days <= self.settings["keep_days"]]
+        have = (now_utc().date() - digest.history_start(self.store, self.cfg)).days + 1
+        return [days for days in RANGES if days <= self.settings["keep_days"] and (days <= 60 or days <= have)]
 
     def my_range(self, user):
         """How many days back this person's digest reaches."""
@@ -717,7 +725,7 @@ class Bot:
             user["id"],
             "How far back should your papers go? Your digest picks the best ones you haven't seen yet from that "
             "time. Going further back is good if you get few papers, or are catching up.",
-            [buttons],
+            in_rows(buttons, 2),
         )
 
     def set_range(self, user, days):
@@ -1242,8 +1250,19 @@ class Bot:
             f"Reactions: 👍 {n['likes']} · 👎 {n['dislikes']} · 💾 {n['saves']}",
             f"Searches: {n['searches']} · watched topics: {n['watches']}",
             f"Gemini: about {n['papers']} paper fingerprints, {n['hooks']} hooks, {n['summaries']} summaries",
+            self.history_line(),
         ]
         self.say(user["id"], "\n".join(lines))
+
+    def history_line(self):
+        """How far back the bot has every paper, and how the filling in is going."""
+        start = digest.history_start(self.store, self.cfg)
+        line = f"History: every paper since {start.day} {start:%B %Y}"
+        goal = min(self.settings["backfill_days"], self.settings["keep_days"])
+        if goal and (now_utc().date() - start).days < goal:
+            used = self.store.get("backfill_used", 0) if self.store.get("backfill_day") == now_utc().date().isoformat() else 0
+            line += f", filling in a year back at up to {self.settings['backfill_per_day']} papers a day ({used} today)"
+        return line
 
     def send_alert(self, uid, pid, label):
         """Called by the daily update for each new paper by someone this person follows."""
@@ -1300,12 +1319,38 @@ class Bot:
             if self.pending_sources and last:
                 only, self.pending_sources = set(self.pending_sources), set()
                 self.start_update(only)
+            elif last:
+                self.maybe_backfill(now)
             return
         if self.update_tried_at and now - self.update_tried_at < timedelta(minutes=30):
             return  # the last try failed recently: wait a little
         self.update_tried_at = now
         self.pending_sources.clear()  # the daily update fetches them too
         self.start_update(None)
+
+    def maybe_backfill(self, now):
+        """Fill in older papers (bot.backfill_days), a week of them at a time, within a daily budget of
+        fingerprints, while nothing else is updating."""
+        per_day, today = self.settings["backfill_per_day"], now.date().isoformat()
+        if not self.settings["backfill_days"] or self.backfill_done or (self.backfill_wait and now < self.backfill_wait):
+            return
+        used = int(self.store.get("backfill_used", 0)) if self.store.get("backfill_day") == today else 0
+        if used >= per_day:
+            return
+        self.updating = threading.Thread(target=self.run_backfill, args=(per_day - used, used, today), name="backfill", daemon=True)
+        self.updating.start()
+
+    def run_backfill(self, budget, used, today):
+        try:
+            made, self.backfill_done = digest.backfill_step(self.store, self.cfg, self.client, budget)
+        except Exception as exc:
+            log.warning("Filling in older papers: %s; trying again in an hour", describe(exc))
+            self.backfill_wait = now_utc() + timedelta(hours=1)
+            return
+        self.store.put("backfill_day", today)
+        self.store.put("backfill_used", used + made)
+        if self.backfill_done:
+            log.info("Filling in older papers: done")
 
     def start_update(self, only):
         self.updating = threading.Thread(target=self.run_update, args=(only,), name="update", daemon=True)

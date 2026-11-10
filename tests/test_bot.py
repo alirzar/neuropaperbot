@@ -195,6 +195,7 @@ catalog.journal_details = lambda abbr: DETAILS.get(abbr)
 cfg = load_config()
 store = Store(WORK / "data" / "bot.db")
 bot = botmod.Bot(cfg, store, gemini)
+bot.settings["backfill_days"] = 0  # filling in older papers has its own test, test_backfill.py
 BASE_KEYS = catalog.base_keys(cfg)
 
 
@@ -792,7 +793,7 @@ check(store.user(CARL)["per_digest"] == 10, "up to 10 papers")
 print("22. how far back")
 message(CARL, "/range")
 ranges = tg.to(CARL, "sendMessage")[-1]
-check(buttons(ranges) == [["✅ This week", "2 weeks", "A month", "2 months"]], "/range: four choices, this week ticked")
+check(buttons(ranges) == [["✅ This week", "2 weeks"], ["A month", "2 months"]], "/range: four choices, this week ticked (no 6 months or year without the history)")
 store.run("UPDATE papers SET added_at=? WHERE doi=?", "2000-01-01T00:00:00+00:00", PAPERS[2]["doi"])  # an old paper
 old = store.paper_by_doi(PAPERS[2]["doi"])
 store.update_user(CARL, step=None, topics=[], keywords="orientation tuning in visual cortex", tz="UTC", hour=6)
@@ -811,7 +812,7 @@ message(CARL, "/digest")
 check("Orientation tuning in visual cortex" in tg.to(CARL, "sendPhoto")[before]["caption"], "and it leads Carl's digest, as the best match")
 bot.settings["keep_days"] = 30
 message(CARL, "/range")
-check(buttons(tg.to(CARL, "sendMessage")[-1]) == [["This week", "2 weeks", "✅ A month"]], "no farther back than papers are kept")
+check(buttons(tg.to(CARL, "sendMessage")[-1]) == [["This week", "2 weeks"], ["✅ A month"]], "no farther back than papers are kept")
 bot.settings["keep_days"] = 90
 
 print("21. the log of slow actions says what, but not what people typed")

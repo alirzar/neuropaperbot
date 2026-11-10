@@ -172,6 +172,7 @@ catalog.journal_details = lambda abbr: {"per_month": 10.0, "brain_per_month": 9.
 cfg = load_config()
 store = Store(WORK / "data" / "bot.db")
 bot = botmod.Bot(cfg, store, gemini, {"telegram": telegram_api.App(), "discord": dc.App()})
+bot.settings["backfill_days"] = 0  # tested in test_backfill.py
 
 
 def dm(uid, text, name="Dee", username="dee_lab"):
