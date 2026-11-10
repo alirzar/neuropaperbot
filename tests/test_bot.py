@@ -291,7 +291,9 @@ for line in ("<b>Areas:</b> Learning &amp; memory", "<b>In your words:</b> hippo
              "<b>Sources:</b> none picked, so papers come from everything I follow",
              "<b>When:</b> every day at 8:00, Eastern (Toronto, New York) time", "<b>Papers each time:</b> 3"):
     check(line in summary["text"], f"summary shows {line!r}")
-check(buttons(summary) == [["✅ Start my digest"], ["Areas", "Keywords", "Sources"], ["Time", "Days", "Papers each time"]], "start, or change any part")
+check(buttons(summary) == [["✅ Start my digest"], ["Areas", "Keywords", "Sources"], ["Time", "Days"], ["Papers each time", "How far back"]],
+      "start, or change any part")
+check("<b>Papers each time:</b> 3, from the past week" in summary["text"], "the summary says how far back")
 store.update_user(ADMIN, last_digest=None)
 bot.updating = SimpleNamespace(is_alive=lambda: True)
 store.put("last_update", "2026-11-04")
@@ -370,11 +372,12 @@ check(buttons(footer) == [["➡️ 3 more"]], "and another ➡️ button")
 tap(ADMIN, "more", message_id=footer["_id"])
 check(len(tg.to(ADMIN, "sendPhoto")) == 8 and tg.to(ADMIN)[-1].get("caption"), "the last 2, with no button after them")
 tap(ADMIN, "more", message_id=footer["_id"])
-check("every new paper from the past week" in tg.last(ADMIN), "nothing left: says so")
+check("every paper from the past week you haven't seen" in tg.last(ADMIN) and "/range" in tg.last(ADMIN),
+      "nothing left: says so, and how to reach further back")
 
 message(ADMIN, "/settings")
 settings = tg.to(ADMIN, "sendMessage")[-1]
-check("Tap one to change it." in settings["text"] and buttons(settings) == [["Areas", "Keywords", "Sources"], ["Time", "Days", "Papers each time"]],
+check("Tap one to change it." in settings["text"] and buttons(settings) == [["Areas", "Keywords", "Sources"], ["Time", "Days"], ["Papers each time", "How far back"]],
       "/settings: the same summary, without Start")
 tap(ADMIN, "change:count", message_id=settings["_id"])
 tap(ADMIN, "count:3")
@@ -775,15 +778,41 @@ check(store.user(ADMIN)["is_admin"] and store.user(ADMIN)["status"] == "active",
 
 print("20. buttons only do what they offer")
 carl = store.user(CARL)
-for data in ("count:100000", "count:-3", "count:0", "count:11", "hour:99", "hour:x", "tz:99", "tz:-1", "tz:abc", "day:9", "days:bogus"):
+for data in ("count:100000", "count:-3", "count:0", "count:11", "hour:99", "hour:x", "tz:99", "tz:-1", "tz:abc", "day:9", "days:bogus",
+             "range:999", "range:3"):
     tap(CARL, data)
 after = store.user(CARL)
-check((after["per_digest"], after["hour"], after["tz"], after["days"]) == (carl["per_digest"], carl["hour"], carl["tz"], carl["days"]),
-      "made-up numbers change nothing")
+fields = ("per_digest", "hour", "tz", "days", "lookback")
+check([after[f] for f in fields] == [carl[f] for f in fields], "made-up numbers change nothing")
 tap(CARL, "count:5")
 check(store.user(CARL)["per_digest"] == 5, "while real ones still work")
 tap(CARL, "count:10")
 check(store.user(CARL)["per_digest"] == 10, "up to 10 papers")
+
+print("22. how far back")
+message(CARL, "/range")
+ranges = tg.to(CARL, "sendMessage")[-1]
+check(buttons(ranges) == [["✅ This week", "2 weeks", "A month", "2 months"]], "/range: four choices, this week ticked")
+store.run("UPDATE papers SET added_at=? WHERE doi=?", "2000-01-01T00:00:00+00:00", PAPERS[2]["doi"])  # an old paper
+old = store.paper_by_doi(PAPERS[2]["doi"])
+store.update_user(CARL, step=None, topics=[], keywords="orientation tuning in visual cortex", tz="UTC", hour=6)
+bot.refresh_profile(store.user(CARL))
+week = [p["pid"] for p in digest.pick(store, store.user(CARL), 100, bot.my_range(store.user(CARL)))]
+check(old["pid"] not in week, "an old paper isn't in this week's choice")
+store.run("UPDATE papers SET added_at=? WHERE doi=?", (datetime.now(timezone.utc) - timedelta(days=20)).isoformat(timespec="seconds"),
+          PAPERS[2]["doi"])
+week = [p["pid"] for p in digest.pick(store, store.user(CARL), 100, bot.my_range(store.user(CARL)))]
+tap(CARL, "range:30")
+check(tg.last(CARL) == "Done: your papers now come from the past month." and store.user(CARL)["lookback"] == 30, "a month picked")
+month = [p["pid"] for p in digest.pick(store, store.user(CARL), 100, bot.my_range(store.user(CARL)))]
+check(old["pid"] not in week and old["pid"] in month, "a paper from 20 days ago: not this week, but within the month")
+before = len(tg.to(CARL, "sendPhoto"))
+message(CARL, "/digest")
+check("Orientation tuning in visual cortex" in tg.to(CARL, "sendPhoto")[before]["caption"], "and it leads Carl's digest, as the best match")
+bot.settings["keep_days"] = 30
+message(CARL, "/range")
+check(buttons(tg.to(CARL, "sendMessage")[-1]) == [["This week", "2 weeks", "✅ A month"]], "no farther back than papers are kept")
+bot.settings["keep_days"] = 90
 
 print("21. the log of slow actions says what, but not what people typed")
 happened = botmod.what_happened

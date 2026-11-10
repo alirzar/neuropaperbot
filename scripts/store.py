@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
     tz TEXT,
     hour INTEGER,
     days TEXT,                       -- the weekdays it comes (JSON list, 0 is Monday), or NULL for every day
+    lookback INTEGER,                -- how many days back their digest reaches, or NULL for the default
     per_digest INTEGER,
     sources TEXT,                    -- the sources they ticked (JSON list of keys); NULL until they tick one
     profile BLOB,                    -- a fingerprint per topic and keyword phrase
@@ -80,6 +81,7 @@ ADDED_COLUMNS = [  # columns that came later, added to older databases when the 
     ("users", "sources", "TEXT"),
     ("users", "platform", "TEXT NOT NULL DEFAULT 'telegram'"),
     ("users", "days", "TEXT"),
+    ("users", "lookback", "INTEGER"),
     ("papers", "src", "TEXT"),
     ("papers", "hidden", "INTEGER NOT NULL DEFAULT 0"),
 ]

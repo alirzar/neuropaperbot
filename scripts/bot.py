@@ -53,7 +53,7 @@ DEFAULTS = {  # overridden by the "bot" section of config.json
     "papers_per_digest": 3,
     "recent_days": 7,
     "search_days": 60,
-    "keep_days": 60,
+    "keep_days": 90,
     "summaries_per_day": 10,
     "searches_per_day": 30,
     "follows_per_person": 20,
@@ -82,6 +82,8 @@ HOURS = [6, 7, 8, 9, 10, 12, 14, 17, 20]
 COUNTS = list(range(1, 11))  # papers per digest people can pick
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Python's weekday() order
 EVERY_DAY, WEEKDAYS = list(range(7)), list(range(5))
+RANGES = {7: "the past week", 14: "the past 2 weeks", 30: "the past month", 60: "the past 2 months"}  # how far back
+RANGE_BUTTONS = {7: "This week", 14: "2 weeks", 30: "A month", 60: "2 months"}
 
 HELP = """I send you a daily digest of new neuroscience papers picked for your interests.
 
@@ -90,12 +92,12 @@ HELP = """I send you a daily digest of new neuroscience papers picked for your i
 /saved: papers you saved · /export: them as a file for Zotero
 /follow <i>name</i>: a message when an author publishes (/following, /unfollow)
 /watch <i>topic</i>: a message when a new paper is on it (/watching, /unwatch)
-/settings: what you get, and when (or straight to /topics, /keywords, /sources, /time, /days)
+/settings: what you get, and when (or straight to /topics, /keywords, /sources, /time, /days, /range)
 /privacy: what I keep · /stop: delete it all
 
 Paste a DOI or a bioRxiv link and I'll summarize the paper in plain language."""
 
-PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone, hour and days you gave me; which papers I sent you; and your 👍/👎, saved papers, followed authors and watched topics.
+PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone, hour, days and range you gave me; which papers I sent you; and your 👍/👎, saved papers, followed authors and watched topics.
 
 It's only used to pick your papers. It stays in the bot's own database and isn't shared. Your 👍 and saves count in /popular, without your name, once at least two people liked or saved a paper. Journals you add are offered to everyone, without your name. /stop deletes all of it."""
 
@@ -123,6 +125,7 @@ DISCORD_COMMANDS = [  # Discord's slash commands: (name, description, option or 
     ("sources", "The journals and preprints you get", None),
     ("time", "When your digest arrives", None),
     ("days", "Which days your digest comes", None),
+    ("range", "How far back your papers go", None),
     ("tz", "Set your time zone by name", ("name", "Like Europe/Madrid", True)),
     ("settings", "Your choices, and changing them", None),
     ("summary", "A plain-language summary of a paper", ("doi", "A DOI, or a bioRxiv or medRxiv link", True)),
@@ -177,6 +180,10 @@ def describe_days(days):
     if days == [5, 6]:
         return "on weekends"
     return "on " + ", ".join(DAYS[d] for d in days)
+
+
+def describe_range(days):
+    return RANGES.get(days, f"the past {days} days")
 
 
 def per_month(n):
@@ -333,6 +340,7 @@ class Bot:
             "/sources": lambda: self.ask_sources(user),
             "/time": lambda: self.ask_tz(user),
             "/days": lambda: self.ask_days(user),
+            "/range": lambda: self.ask_range(user),
             "/tz": lambda: self.set_tz(user, arg),
             "/settings": lambda: self.show_summary(user),
             "/find": lambda: self.find(user, arg),
@@ -377,6 +385,7 @@ class Bot:
             "days": lambda: self.preset_days(user, value, message_id),
             "days_done": lambda: self.days_done(user, message_id),
             "count": lambda: self.set_count(user, choice(value, COUNTS)),
+            "range": lambda: self.set_range(user, choice(value, self.ranges())),
             "change": lambda: self.change(user, value, message_id),
             "go": lambda: self.start_digest(user, message_id),
             "more": lambda: self.more(user, message_id),
@@ -693,6 +702,34 @@ class Bot:
             self.say(uid, f"Done: your digest now comes at {hour}:00 ({html.escape(user['tz'] or 'UTC')} time).")
         return "Saved"
 
+    def ranges(self):
+        """The ranges people can pick: up to as far back as the bot keeps papers."""
+        return [days for days in RANGES if days <= self.settings["keep_days"]]
+
+    def my_range(self, user):
+        """How many days back this person's digest reaches."""
+        return user["lookback"] or self.settings["recent_days"]
+
+    def ask_range(self, user):
+        now = self.my_range(user)
+        buttons = [button(("✅ " if days == now else "") + RANGE_BUTTONS[days], f"range:{days}") for days in self.ranges()]
+        self.say(
+            user["id"],
+            "How far back should your papers go? Your digest picks the best ones you haven't seen yet from that "
+            "time. Going further back is good if you get few papers, or are catching up.",
+            [buttons],
+        )
+
+    def set_range(self, user, days):
+        if days is None:
+            return None
+        self.store.update_user(user["id"], lookback=days)
+        if user["step"] == "confirm":
+            self.show_summary(self.store.user(user["id"]))
+        else:
+            self.say(user["id"], f"Done: your papers now come from {describe_range(days)}.")
+        return "Saved"
+
     def my_days(self, user):
         """The weekdays this person gets a digest (0 is Monday); every day unless they chose."""
         return EVERY_DAY if user["days"] is None else sorted(user["days"])
@@ -779,14 +816,15 @@ class Bot:
             "<b>Sources:</b> " + (html.escape(", ".join(sources)) + " (these come first)" if sources
                                   else "none picked, so papers come from everything I follow"),
             f"<b>When:</b> {html.escape(when)}",
-            f"<b>Papers each time:</b> {n}",
+            f"<b>Papers each time:</b> {n}, from {describe_range(self.my_range(user))}",
         ])
 
     def show_summary(self, user):
         """The summary with a button to change each part; at the end of setup, also to start."""
         changes = [
             [button("Areas", "change:topics"), button("Keywords", "change:keywords"), button("Sources", "change:sources")],
-            [button("Time", "change:time"), button("Days", "change:days"), button("Papers each time", "change:count")],
+            [button("Time", "change:time"), button("Days", "change:days")],
+            [button("Papers each time", "change:count"), button("How far back", "change:range")],
         ]
         if user["step"] == "confirm":
             text = self.summary(user) + "\n\nDoes this look right? Start your digest, or change something first."
@@ -812,6 +850,8 @@ class Bot:
             self.ask_days(user)
         elif what == "count":
             self.ask_count(user)
+        elif what == "range":
+            self.ask_range(user)
         return None
 
     def start_digest(self, user, message_id):
@@ -855,7 +895,7 @@ class Bot:
     def send_papers(self, user, kind, header=None):
         """This person's next best papers, then a ➡️ button if more are waiting. Returns how many it sent."""
         n = user["per_digest"] or self.settings["papers_per_digest"]
-        papers = digest.pick(self.store, user, n + 1, self.settings["recent_days"], self.my_sources(user))
+        papers = digest.pick(self.store, user, n + 1, self.my_range(user), self.my_sources(user))
         if papers and header:
             self.say(user["id"], header)
         self.write_hooks(user, papers[:n])
@@ -875,7 +915,8 @@ class Bot:
         if message_id:
             self.edit(uid, message_id, f"➡️ {n} more:")  # the button goes, and the message heads the next papers
         if not self.send_papers(user, "more"):
-            self.say(uid, "That's every new paper from the past week. More tomorrow!")
+            self.say(uid, f"That's every paper from {describe_range(self.my_range(user))} you haven't seen. More tomorrow, "
+                          "or reach further back with /range.")
         return None
 
     def write_hooks(self, user, papers):
