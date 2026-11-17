@@ -28,6 +28,8 @@ BIORXIV = "https://api.biorxiv.org/details/{server}/{start}/{end}/{cursor}"
 PREPRINTS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}  # the servers api.biorxiv.org covers
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 TIMEOUT = 60
+TRIES = 3  # tries per page from bioRxiv's API, which now and then drops a connection or times out
+RETRY_WAIT = 5  # seconds before the second try, twice that before the third
 
 # Words in a title or abstract that mark a paper as being about the brain. Used for journals that
 # publish far beyond neuroscience; it's generous on purpose, and Gemini makes the final call.
@@ -70,17 +72,26 @@ def pubmed_count(term, api_key=None):
     return int(found["esearchresult"]["count"])
 
 
+def biorxiv_page(url, params):
+    """One page from bioRxiv's API. It now and then drops a connection, times out or has a server error,
+    and one failed page costs the whole source for that update, so each page gets a few tries."""
+    for attempt in range(TRIES):
+        try:
+            resp = session.get(url, params=params, timeout=TIMEOUT)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError, requests.HTTPError) as exc:
+            on_their_side = not isinstance(exc, requests.HTTPError) or exc.response is None or exc.response.status_code >= 500
+            if not on_their_side or attempt == TRIES - 1:
+                raise
+            time.sleep(RETRY_WAIT * (attempt + 1))
+
+
 def fetch_biorxiv(start, end, category, server="biorxiv"):
     """First versions posted in one category of bioRxiv or (with server="medrxiv") medRxiv."""
     papers, cursor, total = [], 0, 1
     while cursor < total:
-        resp = session.get(
-            BIORXIV.format(server=server, start=start, end=end, cursor=cursor),
-            params={"category": category},
-            timeout=TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        data = biorxiv_page(BIORXIV.format(server=server, start=start, end=end, cursor=cursor), {"category": category})
         msg = (data.get("messages") or [{}])[0]
         page = data.get("collection") or []
         if msg.get("status") != "ok" or not page:

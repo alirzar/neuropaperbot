@@ -26,7 +26,7 @@ os.environ.update(TELEGRAM_BOT_TOKEN="fake", TELEGRAM_CHAT_ID="111", GEMINI_API_
 import bot as botmod  # noqa: E402
 import digest  # noqa: E402
 import telegram_api  # noqa: E402
-from common import load_config, now_utc  # noqa: E402
+from common import gemini_day, gemini_reset, load_config, now_utc  # noqa: E402
 from store import Store  # noqa: E402
 
 failures = []
@@ -154,6 +154,57 @@ bot.settings["keep_days"] = 200
 store.put("backfill_next", (TODAY - timedelta(days=400)).isoformat())
 check(bot.ranges()[-1] == 182, "never past the papers kept")
 check("History: every paper since" in bot.history_line(), f"/stats says how far back: {bot.history_line()}")
+
+print("7. the budget follows Gemini's day, which starts at midnight Pacific time")
+t1 = datetime(2026, 1, 15, 23, 30, tzinfo=timezone.utc)  # 15:30 in California
+t2 = t1 + timedelta(hours=1)  # past midnight UTC, still Jan 15 in California
+t3 = datetime(2026, 1, 16, 8, 30, tzinfo=timezone.utc)  # 00:30 in California: Gemini's next day
+check(gemini_day(t1) == gemini_day(t2) == "2026-01-15" and gemini_day(t3) == "2026-01-16", "Gemini's day runs midnight to midnight Pacific")
+check(gemini_reset(t2) == datetime(2026, 1, 16, 8, tzinfo=timezone.utc), "its limits reset at 08:00 UTC in winter")
+check(gemini_reset(datetime(2026, 7, 1, 12, tzinfo=timezone.utc)) == datetime(2026, 7, 2, 7, tzinfo=timezone.utc), "and at 07:00 UTC in summer")
+bot.backfill_done, bot.backfill_wait, bot.updating = False, None, None
+bot.settings.update(backfill_per_day=4)
+store.put("backfill_day", "2026-01-15")
+store.put("backfill_used", 4)  # that day's budget, spent
+bot.maybe_backfill(t2)
+check(bot.updating is None, "past midnight UTC but the same Gemini day: no new budget")
+store.put("backfill_day", "2026-01-16")  # counted by UTC day, as before
+bot.maybe_backfill(t2)
+check(bot.updating is None, "a budget counted by UTC day isn't spent twice either")
+store.put("backfill_day", "2026-01-15")
+bot.maybe_backfill(t3)
+check(bot.updating is not None, "Gemini's next day: a new budget")
+bot.updating.join(10)
+check(store.get("backfill_day") == "2026-01-16", "counted for that day")
+
+print("8. Gemini's daily limit: wait for it to reset")
+
+
+class LimitError(Exception):
+    code = 429
+
+
+class DailyLimited(FakeGemini):
+    def embed_content(self, *, model, contents, config=None):
+        raise LimitError("429 RESOURCE_EXHAUSTED. Embed content requests per day limit exceeded on Free Tier. "
+                         "'quotaId': 'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier'. Please retry in 1h45m42.6s.")
+
+
+store.add_paper({"doi": "10.1101/needs.fingerprint", "title": "Waiting", "abstract": "Old one.", "date": str(TODAY - timedelta(days=30))},
+                added_at=f"{TODAY - timedelta(days=30)}T12:00:00+00:00")
+bot.client, bot.backfill_done, bot.backfill_wait = DailyLimited(), False, None
+bot.run_backfill(5, 0, gemini_day(now_utc()))
+check(bot.backfill_wait == gemini_reset(now_utc()), f"filling in waits until the limit resets: {bot.backfill_wait}")
+store.put("last_update", (TODAY - timedelta(days=1)).isoformat())
+bot.run_update()
+check(bot.update_wait == gemini_reset(now_utc()), "so does the daily update")
+bot.updating, bot.update_tried_at = None, None
+bot.settings["update_hour_utc"] = 0  # so the time of day the tests run doesn't matter
+bot.maybe_update(bot.update_wait - timedelta(minutes=1))
+check(bot.updating is None, "which doesn't try again before then")
+bot.maybe_update(bot.update_wait + timedelta(minutes=1))
+check(bot.updating is not None, "but does once the limit has reset")
+bot.updating.join(10)
 
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

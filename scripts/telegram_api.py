@@ -4,14 +4,43 @@ API reference: https://core.telegram.org/bots/api
 """
 import json
 import os
+import re
+import threading
 
 import requests
 
 TIMEOUT = 60
+_local = threading.local()  # each thread's own connection to Telegram, kept open between calls
 
 
 class TelegramError(Exception):
     pass
+
+
+def _session():
+    """This thread's connection to Telegram. Reusing it saves finding and connecting to Telegram's servers
+    on every call, which can take seconds; each thread keeps its own, as a session isn't meant to be shared."""
+    if not hasattr(_local, "session"):
+        _local.session = requests.Session()
+    return _local.session
+
+
+def _drop_session():
+    """Close and forget this thread's connection, after it failed: the next call opens a new one."""
+    old = _local.__dict__.pop("session", None)
+    if old is not None:
+        old.close()
+
+
+def _reason(exc, token):
+    """What went wrong, briefly and without the token: requests' errors quote the URL, which holds it."""
+    inner = exc.args[0] if exc.args else exc
+    inner = getattr(inner, "reason", None) or inner  # urllib3's MaxRetryError wraps the actual cause
+    text = re.sub(r"<[\w.]+ object at 0x[0-9a-fA-F]+>:?\s*", "", str(inner))
+    for secret in (token, token.partition(":")[2]):
+        if secret:
+            text = text.replace(secret, "…")
+    return f"{type(exc).__name__}: {text[:200]}" if text.strip() else type(exc).__name__
 
 
 def call(method, files=None, **params):
@@ -19,12 +48,21 @@ def call(method, files=None, **params):
     if not token:
         raise TelegramError("TELEGRAM_BOT_TOKEN is not set (in .env locally, or as a GitHub secret)")
     data = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in params.items() if v is not None}
+    url = f"https://api.telegram.org/bot{token}/{method}"
     try:
-        resp = requests.post(f"https://api.telegram.org/bot{token}/{method}", data=data, files=files, timeout=TIMEOUT)
+        for attempt in range(2):
+            try:
+                resp = _session().post(url, data=data, files=files, timeout=TIMEOUT)
+                break
+            except requests.ConnectionError:
+                # A connection kept open can go stale while it sits idle, if the other end drops it: open a
+                # new one and try once more. (Not after a timeout, when the message may have gone out.)
+                _drop_session()
+                if attempt:
+                    raise
         body = resp.json()
     except (requests.RequestException, ValueError) as exc:
-        # The request URL contains the token, so keep it out of the error message.
-        raise TelegramError(f"{method}: {type(exc).__name__}") from None
+        raise TelegramError(f"{method}: {_reason(exc, token)}") from None
     if not body.get("ok"):
         raise TelegramError(f"{method}: {body.get('description', 'failed')}")
     return body["result"]

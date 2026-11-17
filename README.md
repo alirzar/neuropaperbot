@@ -98,7 +98,7 @@ Copying the database keeps everyone's setup; without it, people set up again. Do
 */10 * * * * PYTHON=/path/to/envs/neurobot/bin/python flock -n $HOME/.neuropaperbot.lock $HOME/neuropaperbot/scripts/run_bot.sh
 ```
 
-Within 10 minutes the bot is running. Its log is `logs/bot.log`, which you can follow with `tail -f logs/bot.log`. To stop the bot for good, delete that line with `crontab -e`, then run `pkill -f run_bot.sh; pkill -f scripts/bot.py`.
+Within 10 minutes the bot is running. Its log is `logs/bot.log` (times in UTC), which you can follow with `tail -f logs/bot.log`. To stop the bot for good, delete that line with `crontab -e`, then run `pkill -f run_bot.sh; pkill -f scripts/bot.py`.
 
 With admin rights, a systemd service does the same job. Save this as `/etc/systemd/system/neuropaperbot.service`, with your own username, folder and Python path:
 
@@ -135,7 +135,7 @@ In `config.json`:
 | `bot.papers_per_digest` | Papers per digest, until someone picks their own with `/settings` |
 | `bot.recent_days` | How far back each daily update looks, and how far back digests reach unless someone picks a longer `/range` |
 | `bot.search_days`, `bot.keep_days` | How far back `/find` looks, and when old papers are forgotten (saved ones are kept). `/range` never offers more than `keep_days`. |
-| `bot.backfill_days`, `bot.backfill_per_day` | How far back to fill in older papers (0 turns it off), and how many fingerprints a day it may use |
+| `bot.backfill_days`, `bot.backfill_per_day` | How far back to fill in older papers (0 turns it off), and how many fingerprints a day it may use. Days are counted as Gemini counts them, from midnight Pacific time, when its daily limits reset. |
 | `bot.summaries_per_day`, `bot.searches_per_day` | Daily limits per person (searches include journal searches); you have none |
 | `bot.more_per_day` | How many times a day each person can tap **➡️ more**; you have no limit |
 | `bot.follows_per_person`, `bot.watches_per_person` | The most authors one person can follow, and topics they can watch |
@@ -305,7 +305,8 @@ Each test works in a throwaway copy of the project with its own database, so you
 | `test_bot.py` | The public bot on Telegram: joining, setup and its summary, digests and **➡️ more**, sources and adding journals, summaries, search, author alerts and the daily schedule |
 | `test_discord.py` | The same bot on Discord: its format, dropdowns, slash commands, and one person from joining to leaving |
 | `test_quota.py` | Gemini's free-tier limits, and the daily update carrying on where it stopped |
-| `test_backfill.py` | Filling in older papers: a week at a time, within the daily budget, with their own dates |
+| `test_backfill.py` | Filling in older papers: a week at a time, within the daily budget, with their own dates; and waiting for Gemini's daily limit to reset |
+| `test_network.py` | Talking to Telegram and bioRxiv: a connection kept open for each thread, dropped bioRxiv pages tried again, and errors that say what went wrong without the bot's token |
 | `test_channel.py`, `test_platforms.py` | The GitHub version: batches, review taps, and posting to the channel, Bluesky and LinkedIn. These two fetch real papers, so they need internet access. |
 
 ## Notes

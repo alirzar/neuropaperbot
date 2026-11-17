@@ -34,12 +34,15 @@ import discord_api
 import explain
 import telegram_api as tg
 from card import make_card
-from common import describe, gemini_client, gemini_models, load_config, name_key, now_utc, require_env, shorten
+from common import (
+    describe, gemini_client, gemini_day, gemini_models, gemini_reset, load_config, name_key, now_utc, require_env, shorten
+)
 from compose import attribution, channel_post, copy_message
 from generate_summaries import load_prompt as load_hook_prompt
 from generate_summaries import make_hook
 from lookup import find_doi, lookup
 from store import Store
+from vectors import DailyLimit
 
 log = logging.getLogger("bot")
 
@@ -208,6 +211,7 @@ class Bot:
         self.updating = None  # the update's thread, while it runs
         self.update_tried_at = None  # kept in memory, so a restart tries again straight away
         self.backfill_wait = None  # after a failed step of filling in older papers: when to try again
+        self.update_wait = None  # when Gemini's daily limit is used up: no update until it resets
         self.backfill_done = False
         self.pending_sources = set()  # sources someone just turned on that nobody had: fetched at the next tick
         self.found = {}  # each person's latest journal search, by button ID
@@ -1260,7 +1264,7 @@ class Bot:
         line = f"History: every paper since {start.day} {start:%B %Y}"
         goal = min(self.settings["backfill_days"], self.settings["keep_days"])
         if goal and (now_utc().date() - start).days < goal:
-            used = self.store.get("backfill_used", 0) if self.store.get("backfill_day") == now_utc().date().isoformat() else 0
+            used = self.backfill_used(now_utc())
             line += f", filling in a year back at up to {self.settings['backfill_per_day']} papers a day ({used} today)"
         return line
 
@@ -1322,6 +1326,8 @@ class Bot:
             elif last:
                 self.maybe_backfill(now)
             return
+        if self.update_wait and now < self.update_wait:
+            return  # Gemini's daily limit is used up: nothing to do until it resets
         if self.update_tried_at and now - self.update_tried_at < timedelta(minutes=30):
             return  # the last try failed recently: wait a little
         self.update_tried_at = now
@@ -1331,18 +1337,30 @@ class Bot:
     def maybe_backfill(self, now):
         """Fill in older papers (bot.backfill_days), a week of them at a time, within a daily budget of
         fingerprints, while nothing else is updating."""
-        per_day, today = self.settings["backfill_per_day"], now.date().isoformat()
+        per_day, today = self.settings["backfill_per_day"], gemini_day(now)
         if not self.settings["backfill_days"] or self.backfill_done or (self.backfill_wait and now < self.backfill_wait):
             return
-        used = int(self.store.get("backfill_used", 0)) if self.store.get("backfill_day") == today else 0
+        used = self.backfill_used(now)
         if used >= per_day:
             return
         self.updating = threading.Thread(target=self.run_backfill, args=(per_day - used, used, today), name="backfill", daemon=True)
         self.updating.start()
 
+    def backfill_used(self, now):
+        """Fingerprints filling in has used today, by Gemini's day. Its limit resets at midnight Pacific time,
+        and counting by UTC day let two days' budgets fall before one reset. (A budget counted by UTC day,
+        as before, still counts if it's today's.)"""
+        day = self.store.get("backfill_day")
+        return int(self.store.get("backfill_used", 0)) if day in (gemini_day(now), now.date().isoformat()) else 0
+
     def run_backfill(self, budget, used, today):
         try:
             made, self.backfill_done = digest.backfill_step(self.store, self.cfg, self.client, budget)
+        except DailyLimit:
+            self.backfill_wait = gemini_reset(now_utc())
+            log.warning("Filling in older papers: Gemini's daily limit is used up; carrying on after it resets, at %s UTC",
+                        f"{self.backfill_wait:%H:%M}")
+            return
         except Exception as exc:
             log.warning("Filling in older papers: %s; trying again in an hour", describe(exc))
             self.backfill_wait = now_utc() + timedelta(hours=1)
@@ -1359,6 +1377,10 @@ class Bot:
     def run_update(self, only=None):
         try:
             digest.daily_update(self.store, self.cfg, self.client, alert=self.send_alert, only=only, watched=self.send_watch)
+        except DailyLimit:
+            self.update_wait = gemini_reset(now_utc())
+            log.warning("The update stopped: Gemini's daily limit for fingerprints is used up. It carries on after the "
+                        "limit resets, at %s UTC.", f"{self.update_wait:%H:%M}")
         except Exception:
             log.exception("The update failed%s", "" if only else "; it'll try again in 30 minutes")
 
@@ -1418,7 +1440,8 @@ def start_discord(events):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.Formatter.converter = time.gmtime  # in UTC, like run_bot.sh's lines and bot.update_hour_utc
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s UTC %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     for chatty in ("httpx", "google_genai"):  # they log every request
         logging.getLogger(chatty).setLevel(logging.WARNING)
     require_env("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY")

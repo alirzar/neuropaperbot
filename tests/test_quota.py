@@ -97,5 +97,27 @@ store = Store(WORK / "data" / "db2" / "bot.db")
 result = digest.daily_update(store, load_config(), FakeClient([]))
 check(any("scoring" in e for e in result["errors"]) and len(store.recent(7)) == 120, "papers saved and fingerprinted, without scores")
 
+print("5. Gemini's daily limit isn't waited out")
+waits.clear()
+daily = QuotaError("429 RESOURCE_EXHAUSTED. Embed content requests per day limit exceeded on Free Tier. "
+                   "'quotaId': 'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier'. Please retry in 1h45m42.6s.")
+minute = QuotaError("429 RESOURCE_EXHAUSTED. 'quotaId': 'EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier'. "
+                    "Please retry in 30s.")
+check(vectors.is_daily_limit(daily) and not vectors.is_daily_limit(minute), "the daily limit is told apart from the per-minute one")
+
+
+class DailyLimited(FakeClient):
+    def embed_content(self, *, model, contents, config=None):
+        self.calls += 1
+        raise daily
+
+
+client = DailyLimited([])
+try:
+    vectors.embed(client, "m", ["a"], "RETRIEVAL_DOCUMENT")
+    check(False, "the daily limit stops it at once")
+except vectors.DailyLimit:
+    check(waits == [] and client.calls == 1, "the daily limit stops it at once, without waiting minutes for nothing")
+
 print("\nALL OK" if not failures else f"\n{len(failures)} FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

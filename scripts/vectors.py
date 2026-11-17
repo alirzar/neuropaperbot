@@ -16,6 +16,15 @@ QUOTA_WAITS = 5  # how many times one batch waits out Gemini's per-minute limit 
 log = logging.getLogger("bot")
 
 
+class DailyLimit(Exception):
+    """Gemini's daily limit for fingerprints is used up: no more until it resets, at midnight Pacific time."""
+
+
+def is_daily_limit(exc):
+    """Whether a rate-limit error (429) is for the day's quota rather than the minute's."""
+    return getattr(exc, "code", None) == 429 and ("PerDay" in str(exc) or "per day" in str(exc).lower())
+
+
 def retry_after(exc):
     """Seconds Gemini asks us to wait after a rate-limit error (at most 2 minutes)."""
     found = re.search(r"retry in ([\d.]+)s", str(exc)) or re.search(r"retryDelay'?:\s*'(\d+)s", str(exc))
@@ -40,6 +49,8 @@ def embed(client, model, texts, task):
                 )
                 break
             except Exception as exc:
+                if is_daily_limit(exc):  # waiting a few minutes won't help
+                    raise DailyLimit("Gemini's daily limit for fingerprints is used up") from None
                 # Free-tier keys allow 100 texts a minute, and every text in a batch counts.
                 if getattr(exc, "code", None) != 429 or attempt == QUOTA_WAITS:
                     raise

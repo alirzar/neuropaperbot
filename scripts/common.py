@@ -6,8 +6,9 @@ import os
 import re
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -43,6 +44,20 @@ def write_json(path, obj):
 
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+GEMINI_TZ = ZoneInfo("America/Los_Angeles")  # Gemini's daily limits reset at midnight Pacific time
+
+
+def gemini_day(now):
+    """The day Gemini counts its daily limits in, such as '2026-11-16': it starts at midnight Pacific time."""
+    return now.astimezone(GEMINI_TZ).date().isoformat()
+
+
+def gemini_reset(now):
+    """When Gemini's daily limits next reset, at midnight Pacific time, in UTC."""
+    tomorrow = now.astimezone(GEMINI_TZ).date() + timedelta(days=1)
+    return datetime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=GEMINI_TZ).astimezone(timezone.utc)
 
 
 def iso(dt=None):
