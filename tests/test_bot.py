@@ -362,14 +362,14 @@ check(all("Hook:" in c for c in captions), "each card has its hook")
 check(all("💡 Matches <i>" in c for c in captions), f"each card says which interest it matched: {captions[0][-60:]!r}")
 check(buttons(cards[0])[1:] == [["📃 Abstract", "📄 Summary"], ["📋 Copy", "🔗 Similar", "💼 LinkedIn"]], "admin gets the LinkedIn button")
 footer = tg.to(ADMIN, "sendMessage")[-1]
-check(footer["text"] == "Want more?" and buttons(footer) == [["➡️ 3 more"]], "a ➡️ 3 more button after the cards")
+check(footer["text"] == "Want more?" and buttons(footer) == [["➡️ 3 more", "🔎 Search"]], "a ➡️ 3 more button after the cards")
 tap(ADMIN, "more", message_id=footer["_id"])
 edit = tg.edits("editMessageText")[-1]
 check(edit["message_id"] == footer["_id"] and edit["text"] == "➡️ 3 more:" and edit["reply_markup"]["inline_keyboard"] == [],
       "tapping it turns the button into a heading")
 check(len(tg.to(ADMIN, "sendPhoto")) == 6 and len({c["caption"] for c in tg.to(ADMIN, "sendPhoto")}) == 6, "3 different papers")
 footer = tg.to(ADMIN, "sendMessage")[-1]
-check(buttons(footer) == [["➡️ 3 more"]], "and another ➡️ button")
+check(buttons(footer) == [["➡️ 3 more", "🔎 Search"]], "and another ➡️ button")
 tap(ADMIN, "more", message_id=footer["_id"])
 check(len(tg.to(ADMIN, "sendPhoto")) == 8 and tg.to(ADMIN)[-1].get("caption"), "the last 2, with no button after them")
 tap(ADMIN, "more", message_id=footer["_id"])
@@ -590,7 +590,7 @@ message(ANA, "/digest")
 footer = tg.to(ANA, "sendMessage")[-1]
 tap(ANA, "more", message_id=footer["_id"])
 footer = tg.to(ANA, "sendMessage")[-1]
-check(buttons(footer) == [["➡️ 3 more"]], "the first ➡️ works")
+check(buttons(footer) == [["➡️ 3 more", "🔎 Search"]], "the first ➡️ works")
 cards = len(tg.to(ANA, "sendPhoto"))
 tap(ANA, "more", message_id=footer["_id"])
 check(len(tg.to(ANA, "sendPhoto")) == cards and answers[-1] == "That's all for today", "the second is over the limit")
@@ -598,12 +598,111 @@ check(tg.edits("editMessageText")[-1]["text"] == "That's all for today. More tom
 
 print("12. search")
 message(ANA, "/find sleep spindles memory")
-results = tg.to(ANA, "sendMessage")[-5:]
-check("closest matches" in tg.to(ANA, "sendMessage")[-6]["text"], "search header")
+sent = tg.to(ANA, "sendMessage")
+head = max(i for i, m in enumerate(sent) if m["text"].startswith("🔎"))
+heading, results = sent[head]["text"], sent[head + 1 : head + 6]
+check("best matches for <i>sleep spindles memory</i>" in heading and ("since" in heading or "from the past" in heading),
+      f"search header: {heading}")
 check("Sleep spindles" in results[0]["text"], f"best result first: {results[0]['text'][:50]!r}")
 check(not any("battery" in r["text"] or "external paper" in r["text"] for r in results), "never the hidden papers")
+search = json.loads(store.user(ANA)["search"])
+check(len(search["pids"]) > 5 and search["shown"] == 5 and "sleep" not in json.dumps(search),
+      "it keeps the results for ➡️, not the words")
+footer = sent[head + 6]
+check(footer["text"] == "Want more matches?" and buttons(footer) == [[f"➡️ {min(5, len(search['pids']) - 5)} more"]],
+      "a ➡️ button for more matches")
+tap(ANA, f"smore:{search['id']}", message_id=footer["_id"])
+check(tg.edits("editMessageText")[-1]["text"] == "➡️ More matches:", "which turns into a heading")
+check(len(tg.to(ANA, "sendMessage")) > len(sent) and json.loads(store.user(ANA)["search"])["shown"] == 10, "over the next matches")
+tap(ANA, "smore:0a0a0a")
+check(answers[-1] == "That search is over. Type a new one!", "an older search's ➡️ says it's over")
+message(ANA, "hippocampal ripples in rodents")
+check(any("best matches for <i>hippocampal ripples in rodents</i>" in m["text"] for m in tg.to(ANA, "sendMessage")[-8:]),
+      "typing a topic searches for it")
+check(not store.run("SELECT COUNT(*) FROM vectors WHERE key LIKE '%rodents%'").fetchone()[0], "and its words aren't kept")
+message(ANA, "thanks!")
+check(tg.last(ANA).startswith("I send you a daily digest"), "a thank-you gets the help, not a search")
+message(ANA, "digest")
+check(tg.last(ANA).startswith("I send you a daily digest"), "so does a command's name without its slash")
+store.update_user(ANA, step="tz")
+message(ANA, "hippocampal ripples")
+check(tg.last(ANA).startswith("I send you a daily digest"), "and typing in the middle of setup")
+store.update_user(ANA, step=None)
+spindles = store.paper_by_doi(PAPERS[5]["doi"])["pid"]
+store.record_sent(ANA, spindles, "digest", 1)
+tap(ANA, f"save:{spindles}")
+tap(ANA, f"like:{spindles}")
+message(ANA, "/find sleep spindles and hippocampal ripples")
+row = store.sent_row(ANA, spindles)
+check(row["saved"] == 1 and row["feedback"] == 1, "a saved, 👍'd paper among the results stays saved and 👍'd")
+message(ANA, "/saved")
+check("Sleep spindles" in tg.last(ANA), "and in /saved")
+tap(ANA, f"save:{spindles}")  # as it was, for /export below
+tap(ANA, f"like:{spindles}")
+import time  # noqa: E402
+
+
+class Busy:
+    """Gemini, failing."""
+
+    def __init__(self, error):
+        self.models, self.error = self, error
+
+    def embed_content(self, **kw):
+        raise self.error
+
+
+class LimitError(Exception):
+    code = 429
+
+
+slept, real_sleep, real_client = [], time.sleep, bot.client
+time.sleep = slept.append
+bot.client = Busy(LimitError("429 RESOURCE_EXHAUSTED. 'quotaId': 'EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier'. "
+                             "Please retry in 30s."))
+message(ANA, "grid cells in bats")
+check("can't search right now" in tg.last(ANA) and not slept, "Gemini busy: a search says so at once, without waiting")
+bot.client = Busy(LimitError("429 RESOURCE_EXHAUSTED. Embed content requests per day limit exceeded on Free Tier. "
+                             "'quotaId': 'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier'."))
+message(ANA, "grid cells in bats")
+check("daily limit" in tg.last(ANA), "Gemini's daily limit used up: says that")
+time.sleep, bot.client = real_sleep, real_client
 message(ANA, "/find")
-check("like <code>/find" in tg.last(ANA), "empty search explained")
+check(tg.last(ANA).startswith("What are you looking for?"), "/find on its own asks what to look for")
+tap(ANA, "search")
+check(tg.last(ANA).startswith("What are you looking for?"), "and so does 🔎 Search under a digest")
+
+print("12b. search: by meaning, plus the search's own words")
+
+
+class OneVector:
+    """Gemini, giving every search the same fingerprint."""
+
+    def __init__(self, vector):
+        self.models, self.vector = self, vector
+
+    def embed_content(self, *, model, contents, config=None):
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=self.vector.tolist()) for _ in contents])
+
+
+def toward(share):
+    """A fingerprint whose similarity to the search's is `share`."""
+    v = np.zeros(768, dtype=np.float32)
+    v[0], v[1] = share, (1 - share * share) ** 0.5
+    return v
+
+
+lab = Store(WORK / "data" / "search" / "bot.db")
+for i in range(210):  # closer by meaning, but without the words
+    lab.set_vector(lab.add_paper(paper(100 + i, f"Neurotrophin study {i}", "Growth factors and plasticity.", ["Doe, J."])), toward(0.5))
+named = lab.add_paper(paper(400, "Activity shapes synapses", "BDNF signalling after learning strengthens synapses.", ["Roe, A."]))
+lab.set_vector(named, toward(0.45))
+results = digest.search(lab, OneVector(toward(1.0)), "m", "BDNF signalling", 365, 5)
+check(results[0]["pid"] == named, "a paper using the search's words comes first, though 210 others are closer by meaning")
+check(digest.search_terms('the role of "short-chain fatty acids" in the infant gut') == ["short-chain fatty acids", "infant", "gut"],
+      "quoted phrases stay whole, and filler words don't count")
+check(digest.uses_share({"title": "Gut microbes", "abstract": "Infant feeding."}, ["infant", "gut", "milk"]) == 2 / 3,
+      "the share of the words a paper uses")
 
 print("13. author alerts")
 message(ANA, "/follow Jane Smith")

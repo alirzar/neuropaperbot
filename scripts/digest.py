@@ -31,6 +31,13 @@ QUALITY_WEIGHT = 0.02  # per point of Gemini's 1-10 score away from 5
 # every paper, and each on its own scale, so a fixed cutoff wouldn't do.)
 WATCH_CLOSE, WATCH_MENTIONED = 99, 75  # percentiles
 WATCH_MAX = 3  # messages per watched topic per update
+SEARCH_POOL = 200  # the closest papers by meaning, which also get checked for the search's own words
+MENTION_WEIGHT = 0.1  # added for using every word of a search (similarities are mostly 0.5 to 0.9)
+FILLER = {  # words that say nothing about what a search is for
+    "and", "the", "for", "with", "from", "into", "about", "between", "during", "through", "via", "using", "role",
+    "effect", "effects", "study", "studies", "paper", "papers", "new", "recent", "research", "how", "what", "why",
+    "which", "does", "are", "not", "its", "their", "this", "that", "these", "those", "any", "all",
+}
 HOOKS_MAX = 400  # hooks written ahead per update (20 per Gemini request)
 BACKFILL_WEEK = 7  # days fetched per step when filling in older papers
 
@@ -230,6 +237,42 @@ def mentions(p, phrase):
     return bool(words) and all(w in text for w in words)
 
 
+def search_terms(query):
+    """The words a paper should use to match a search literally: "quoted phrases" whole, and the other
+    words of three letters or more, without filler like 'the' or 'role'."""
+    phrases = [p.strip().lower() for p in re.findall(r'"([^"]+)"', query) if p.strip()]
+    rest = re.sub(r'"[^"]*"', " ", query).lower()
+    words = [w for w in re.findall(r"[\w-]+", rest) if len(w) >= 3 and w not in FILLER]
+    return list(dict.fromkeys(phrases + words))  # each once, in order
+
+
+def uses_share(p, terms):
+    """The share of the terms a paper's title or abstract uses, each at the start of a word."""
+    if not terms:
+        return 0.0
+    text = f"{p['title']} {p.get('abstract') or ''}".lower()
+    return sum(bool(re.search(rf"(?<!\w){re.escape(t)}", text)) for t in terms) / len(terms)
+
+
+def search(store, client, model, query, days, n):
+    """The n papers from the last `days` days that best match a search: by meaning, plus a little for
+    using the search's own words (a gene, a species, a method), which meaning alone can miss. The
+    search's fingerprint is made fresh each time, so its words aren't kept anywhere."""
+    papers = store.candidates(days)  # just what ranking needs: quick for a year
+    if not papers:
+        return []
+    similarity = np.vstack([p["vector"] for p in papers]) @ embed(client, model, [query], "RETRIEVAL_QUERY", waits=0)[0]
+    index = {p["pid"]: i for i, p in enumerate(papers)}
+    pool = [papers[i]["pid"] for i in np.argsort(-similarity, kind="stable")[:SEARCH_POOL]]
+    terms = search_terms(query)
+    if terms:  # papers that use every word, however far down they are by meaning
+        known = set(pool)
+        pool += [pid for pid in store.pids_using(terms, days) if pid in index and pid not in known]
+    found = [store.paper(pid) for pid in pool]
+    scores = [similarity[index[p["pid"]]] + MENTION_WEIGHT * uses_share(p, terms) for p in found]
+    return [found[i] for i in sorted(range(len(found)), key=lambda i: -scores[i])[:n]]
+
+
 def watch_matches(store, client, model, batch, days):
     """(uid, pid, phrase) for each new paper in `batch` that a watched topic should hear about."""
     watches = store.watches()
@@ -297,13 +340,3 @@ def pick(store, user, n, days, mine=()):
     scores, mine = scores_for(store, user, papers), set(mine)
     order = sorted(range(len(papers)), key=lambda i: (papers[i].get("src") not in mine, -scores[i]))
     return [store.paper(papers[i]["pid"]) for i in order[:n]]
-
-
-def search(store, client, model, query, days, n):
-    """The n papers from the last `days` days closest to what the query describes."""
-    papers = store.recent(days)
-    if not papers:
-        return []
-    query_vector = query_vectors(store, client, model, [query])[0]
-    similarity = np.vstack([p["vector"] for p in papers]) @ query_vector
-    return [papers[i] for i in np.argsort(-similarity, kind="stable")[:n]]

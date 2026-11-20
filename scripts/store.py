@@ -84,6 +84,7 @@ ADDED_COLUMNS = [  # columns that came later, added to older databases when the 
     ("users", "lookback", "INTEGER"),
     ("papers", "src", "TEXT"),
     ("papers", "hidden", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "search", "TEXT"),  # their last search's results, for ➡️ more: {"id", "pids", "shown"}, not its words
 ]
 
 
@@ -236,6 +237,17 @@ class Store:
         since = iso(now_utc() - timedelta(days=days))
         rows = self.run("SELECT pid, src, quality, vector FROM papers WHERE added_at>=? AND vector IS NOT NULL AND hidden=0", since)
         return [{"pid": r[0], "src": r[1], "quality": r[2], "vector": unpack(r[3])} for r in rows]
+
+    def pids_using(self, words, days, limit=500):
+        """Papers of the last `days` days, fingerprinted and not set aside, whose title or abstract contains
+        every one of the words (in any case), newest first."""
+        sql = "SELECT pid FROM papers WHERE added_at>=? AND vector IS NOT NULL AND hidden=0"
+        args = [iso(now_utc() - timedelta(days=days))]
+        for word in words:
+            like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            sql += " AND (title LIKE ? ESCAPE '\\' OR abstract LIKE ? ESCAPE '\\')"
+            args += [like, like]
+        return [r[0] for r in self.run(sql + " ORDER BY added_at DESC LIMIT ?", *args, limit)]
 
     def recent(self, days):
         """Papers added in the last `days` days that have a fingerprint."""

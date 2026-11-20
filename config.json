@@ -90,7 +90,7 @@
     "update_hour_utc": 6,
     "papers_per_digest": 3,
     "recent_days": 7,
-    "search_days": 60,
+    "search_days": 365,
     "keep_days": 400,
     "backfill_days": 365,
     "backfill_per_day": 500,

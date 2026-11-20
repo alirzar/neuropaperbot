@@ -17,10 +17,12 @@ Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (you), GEMINI_API_KEY; DISCORD_BOT_TOK
      remembers is in data/db/bot.db.
 """
 import html
+import json
 import logging
 import os
 import queue
 import re
+import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +51,9 @@ log = logging.getLogger("bot")
 POLL_SECONDS = 25  # how long each request to Telegram waits for news
 TICK_SECONDS = 20  # how often the bot checks its schedule
 SLOW_SECONDS = 5  # actions that take longer are logged
+SEARCH_PAGE = 5  # search results at a time
+SEARCH_MAX = 30  # results one search can page through with ➡️
+CHAT = {"hi", "hello", "hey", "help", "thanks", "thank you", "thx", "ok", "okay", "start", "menu"}  # typed: the help, not a search
 
 DEFAULTS = {  # overridden by the "bot" section of config.json
     "approval": True,
@@ -95,8 +100,9 @@ RANGE_BUTTONS = {7: "This week", 14: "2 weeks", 30: "A month", 60: "2 months", 1
 
 HELP = """I send you a daily digest of new neuroscience papers picked for your interests.
 
-/digest: today's papers, now (tap ➡️ under them for more)
-/find <i>topic</i>: search recent papers · /popular: this week's favourites
+🔎 To search for papers, just type what you're looking for, like <i>hippocampal replay</i>.
+
+/digest: today's papers, now (tap ➡️ under them for more) · /popular: this week's favourites
 /saved: papers you saved · /export: them as a file for Zotero
 /follow <i>name</i>: a message when an author publishes (/following, /unfollow)
 /watch <i>topic</i>: a message when a new paper is on it (/watching, /unwatch)
@@ -105,7 +111,7 @@ HELP = """I send you a daily digest of new neuroscience papers picked for your i
 
 Paste a DOI or a bioRxiv link and I'll summarize the paper in plain language."""
 
-PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone, hour, days and range you gave me; which papers I sent you; and your 👍/👎, saved papers, followed authors and watched topics.
+PRIVACY = """What I keep about you: your Telegram or Discord name and ID; the topics, keywords, sources, time zone, hour, days and range you gave me; which papers I sent you or found in your last search; and your 👍/👎, saved papers, followed authors and watched topics.
 
 It's only used to pick your papers. It stays in the bot's own database and isn't shared. Your 👍 and saves count in /popular, without your name, once at least two people liked or saved a paper. Journals you add are offered to everyone, without your name. /stop deletes all of it."""
 
@@ -118,7 +124,7 @@ Missing a journal? Tap <b>➕ Add a journal</b>."""
 DISCORD_COMMANDS = [  # Discord's slash commands: (name, description, option or None); option is (name, description, required)
     ("start", "Set up your digest", None),
     ("digest", "Today's papers, now", None),
-    ("find", "Search recent papers", ("topic", "What to look for, like hippocampal replay", True)),
+    ("find", "Search for papers on a topic", ("topic", "What to look for, like hippocampal replay", True)),
     ("saved", "Papers you saved", None),
     ("follow", "Get a message when an author publishes", ("name", "Their first and last name", True)),
     ("following", "Authors you follow", None),
@@ -176,6 +182,13 @@ def choice(value, allowed):
     except ValueError:
         return None
     return n if n in allowed else None
+
+
+def is_chat(text):
+    """A greeting, a thank-you, a command's name without its slash or a stray character, rather than
+    something to search for."""
+    words = text.strip().lower().strip("!.?,:;()' ")
+    return len(words) < 3 or words in CHAT or words in {name for name, _, _ in DISCORD_COMMANDS} | {"help", "stop"}
 
 
 def describe_days(days):
@@ -308,7 +321,9 @@ class Bot:
         doi = find_doi(text)
         if doi:
             return self.summarize_doi(user, doi)
-        self.say(uid, HELP)
+        if user["step"] in SETUP_STEPS or is_chat(text):
+            return self.say(uid, HELP)
+        self.find(user, text)  # anything else typed is a search
 
     def join(self, platform, uid, name, username):
         is_admin = platform == "telegram" and uid == self.admin
@@ -400,6 +415,8 @@ class Bot:
             "change": lambda: self.change(user, value, message_id),
             "go": lambda: self.start_digest(user, message_id),
             "more": lambda: self.more(user, message_id),
+            "search": lambda: self.ask_search(user),
+            "smore": lambda: self.search_more(user, value, message_id),
             "like": lambda: self.react(user, value, 1, message_id),
             "dislike": lambda: self.react(user, value, -1, message_id),
             "save": lambda: self.save(user, value, message_id),
@@ -876,7 +893,8 @@ class Bot:
         self.store.update_user(uid, step=None)
         self.say(uid, f"All set! Your digest comes {describe_days(self.my_days(user))} at {user['hour']}:00. Here are today's papers:")
         self.send_digest(self.store.user(uid), manual=True)
-        self.say(uid, "Tip: /settings shows your choices, and /help lists everything I can do.")
+        self.say(uid, "Tip: to search for papers, just type what you're looking for. /settings shows your choices, "
+                      "and /help lists everything I can do.")
         return "Started"
 
     def interests(self, user):
@@ -902,7 +920,7 @@ class Bot:
         local = self.local_now(user, now)
         self.store.update_user(uid, last_digest=local.date().isoformat())
         if not self.send_papers(user, "digest", f"☀️ <b>Your papers for {local:%A}, {local.day} {local:%B}</b>"):
-            self.say(uid, "No new papers for you today. Try /find, or add /topics or /sources.")
+            self.say(uid, "No new papers for you today. Type a topic to search, or add /topics or /sources.")
 
     def send_papers(self, user, kind, header=None):
         """This person's next best papers, then a ➡️ button if more are waiting. Returns how many it sent."""
@@ -914,7 +932,7 @@ class Bot:
         for p in papers[:n]:
             self.send_card(user, p, kind)
         if len(papers) > n:
-            self.say(user["id"], "Want more?", [[button(f"➡️ {n} more", "more")]])
+            self.say(user["id"], "Want more?", [[button(f"➡️ {n} more", "more"), button("🔎 Search", "search")]])
         return len(papers[:n])
 
     def more(self, user, message_id):
@@ -1109,19 +1127,66 @@ class Bot:
 
     # ---------- search ----------
     def find(self, user, query):
-        uid = user["id"]
+        """A search: /find, or anything typed that isn't a command. The best matches among the papers the
+        bot has, a few at a time."""
+        uid, query = user["id"], " ".join(query.split())[:300]
         if not query:
-            return self.say(uid, "Send /find and what you're looking for, like <code>/find hippocampal replay</code>.")
+            return self.ask_search(user)
         if not self.allowed(user, "search", self.settings["searches_per_day"]):
             return self.say(uid, "That's all the searches for today. More tomorrow!")
         self.typing(uid)
-        days = self.settings["search_days"]
-        results = digest.search(self.store, self.client, self.embedding_model, query, days, 5)
+        days = min(self.settings["search_days"], self.settings["keep_days"])
+        try:  # without waiting out Gemini's limits: everyone's taps would wait behind this one
+            results = digest.search(self.store, self.client, self.embedding_model, query, days, SEARCH_MAX)
+        except DailyLimit:
+            return self.say(uid, "Sorry, searching has reached Gemini's daily limit. Please try again in a few hours.")
+        except Exception as exc:
+            log.warning("A search failed: %s", describe(exc))
+            return self.say(uid, "Sorry, I can't search right now. Please try again in a few minutes.")
         if not results:
             return self.say(uid, "I don't have any papers yet. Try again after the next daily update.")
-        self.say(uid, f"🔎 The closest matches to <i>{html.escape(query)}</i> from the last {days} days:")
-        for p in results:
-            self.send_compact(user, p, "search")
+        self.say(uid, f"🔎 The best matches for <i>{html.escape(query)}</i> {self.search_reach(days)}:")
+        search = {"id": secrets.token_hex(3), "pids": [p["pid"] for p in results], "shown": 0}  # for ➡️; not the words
+        self.store.update_user(uid, search=json.dumps(search))
+        self.search_page(self.store.user(uid))
+
+    def ask_search(self, user):
+        """🔎 Search under a digest, or /find on its own."""
+        self.say(user["id"], "What are you looking for? Type a topic, a method or a question, like <i>hippocampal replay</i>.")
+
+    def search_reach(self, days):
+        """How far back a search looks: 'from the past year', or 'since 4 August' while the bot is still
+        filling in older papers."""
+        start = digest.history_start(self.store, self.cfg)
+        if start <= now_utc().date() - timedelta(days=days):
+            return f"from {describe_range(days)}"
+        return f"since {start.day} {start:%B}"
+
+    def search_page(self, user):
+        """The next few results of this person's last search, then a ➡️ button while more are left."""
+        search = json.loads(user["search"] or "{}")
+        pids, shown = search.get("pids", []), search.get("shown", 0)
+        for pid in pids[shown : shown + SEARCH_PAGE]:
+            p = self.store.paper(pid)
+            if p:  # unless it was forgotten since
+                self.send_compact(user, p, "search")
+        search["shown"] = shown + SEARCH_PAGE
+        self.store.update_user(user["id"], search=json.dumps(search))
+        left = len(pids) - search["shown"]
+        if left > 0:
+            self.say(user["id"], "Want more matches?", [[button(f"➡️ {min(left, SEARCH_PAGE)} more", f"smore:{search['id']}")]])
+
+    def search_more(self, user, sid, message_id):
+        """➡️ under search results: the next few, if it's still the latest search."""
+        search = json.loads(user["search"] or "{}")
+        if not sid or search.get("id") != sid:
+            if message_id:
+                self.edit_buttons(user["id"], message_id, [])
+            return "That search is over. Type a new one!"
+        if message_id:
+            self.edit(user["id"], message_id, "➡️ More matches:")
+        self.search_page(user)
+        return None
 
     # ---------- author alerts ----------
     def follow(self, user, name):

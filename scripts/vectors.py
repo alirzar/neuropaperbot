@@ -31,10 +31,11 @@ def retry_after(exc):
     return min(float(found.group(1)) + 2 if found else 60, 120)
 
 
-def embed(client, model, texts, task):
+def embed(client, model, texts, task, waits=QUOTA_WAITS):
     """One unit-length fingerprint per text, as rows of an array.
 
-    task is RETRIEVAL_DOCUMENT for papers, and RETRIEVAL_QUERY for interests and searches.
+    task is RETRIEVAL_DOCUMENT for papers, and RETRIEVAL_QUERY for interests and searches. `waits` is how
+    many times a batch waits out the per-minute limit; 0 for a search, which someone is waiting for.
     """
     from google.genai import types
 
@@ -42,7 +43,7 @@ def embed(client, model, texts, task):
     for i in range(0, len(texts), BATCH):
         # Each text as its own Content: a plain list of strings is read as one text by newer models.
         contents = [types.Content(parts=[types.Part(text=t[:6000])]) for t in texts[i : i + BATCH]]
-        for attempt in range(QUOTA_WAITS + 1):
+        for attempt in range(waits + 1):
             try:
                 resp = client.models.embed_content(
                     model=model, contents=contents, config={"task_type": task, "output_dimensionality": DIM}
@@ -52,7 +53,7 @@ def embed(client, model, texts, task):
                 if is_daily_limit(exc):  # waiting a few minutes won't help
                     raise DailyLimit("Gemini's daily limit for fingerprints is used up") from None
                 # Free-tier keys allow 100 texts a minute, and every text in a batch counts.
-                if getattr(exc, "code", None) != 429 or attempt == QUOTA_WAITS:
+                if getattr(exc, "code", None) != 429 or attempt == waits:
                     raise
                 wait = retry_after(exc)
                 log.info("Gemini's per-minute limit: waiting %.0f seconds", wait)

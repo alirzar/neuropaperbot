@@ -323,7 +323,7 @@ check("Hook:" in first["content"] and "**" in first["content"], f"caption in Mar
 check(labels(first) == [["👍", "👎", "💾 Save"], ["📃 Abstract", "📄 Summary"], ["📋 Copy", "🔗 Similar"]], "the same buttons")
 check("💡 Matches _" in first["content"], f"and why it was picked: {first['content'][-70:]!r}")
 footer_id, footer, _ = [m for m in dsc.sent(DEE) if m[1]["content"] == "Want more?"][-1]
-check(labels(footer) == [["➡️ 3 more"]] and footer["components"][0]["components"][0]["style"] == 1, "and ➡️ 3 more")
+check(labels(footer) == [["➡️ 3 more", "🔎 Search"]] and footer["components"][0]["components"][0]["style"] == 1, "and ➡️ 3 more")
 check("/help lists everything" in dsc.contents(DEE)[-1], "then the tip, as on Telegram")
 pid = re.search(r"like:(\w+)", json.dumps(first["components"])).group(1)
 press(DEE, f"like:{pid}", mid)
@@ -352,8 +352,14 @@ check(docs and docs[-1][2]["files[0]"][0] == "saved-papers.ris" and docs[-1][1][
 
 print("8. commands")
 command(DEE, "/find locomotion", token="tok-find")
-check(any("closest matches" in c for c in dsc.contents(DEE)), "/find answers in the DM")
+check(any("best matches" in c for c in dsc.contents(DEE)), "/find answers in the DM")
 check(("DELETE", "/webhooks/4242/tok-find/messages/@original", None, None) in dsc.calls, "and the thinking… line is removed")
+dm(DEE, "locomotion circuits in the spinal cord")
+check(any("best matches" in c and "locomotion circuits" in c for c in dsc.contents(DEE)[-8:]), "typing a topic searches on Discord too")
+more = [m for m in dsc.sent(DEE) if m[1]["content"] == "Want more matches?"]
+check(bool(more) and labels(more[-1][1])[0][0].startswith("➡️"), "with ➡️ for more matches")
+press(DEE, f"smore:{json.loads(store.user(DEE)['search'])['id']}", more[-1][0], token="tok-smore")
+check(dsc.messages[more[-1][0]]["content"] == "➡️ More matches:", "which shows the next ones")
 command(DEE, "/saved", token="tok-saved")
 check("Your saved papers" in dsc.contents(DEE)[-1], "/saved")
 dm(DEE, f"what about {PAPERS[0]['doi']}")
