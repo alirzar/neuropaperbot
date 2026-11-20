@@ -54,6 +54,7 @@ SLOW_SECONDS = 5  # actions that take longer are logged
 SEARCH_PAGE = 5  # search results at a time
 SEARCH_MAX = 30  # results one search can page through with ➡️
 CHAT = {"hi", "hello", "hey", "help", "thanks", "thank you", "thx", "ok", "okay", "start", "menu"}  # typed: the help, not a search
+ANNOUNCE_PAUSE = 0.05  # seconds between an announcement's messages, well within Telegram's limits
 
 DEFAULTS = {  # overridden by the "bot" section of config.json
     "approval": True,
@@ -191,6 +192,14 @@ def is_chat(text):
     return len(words) < 3 or words in CHAT or words in {name for name, _, _ in DISCORD_COMMANDS} | {"help", "stop"}
 
 
+def announcement(text):
+    """The admin's text as people will see it: after 📣, with its first line in bold when there are more."""
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    if len(lines) > 1 and lines[0]:
+        return f"📣 <b>{html.escape(lines[0])}</b>\n" + html.escape("\n".join(lines[1:]))
+    return "📣 " + html.escape("\n".join(lines))
+
+
 def describe_days(days):
     """'every day', 'on weekdays', 'on weekends', or 'on Mon, Wed, Fri'."""
     days = sorted(days)
@@ -312,12 +321,14 @@ class Bot:
         if user["status"] != "active":
             return
         if text.startswith("/"):
-            command, _, arg = text.partition(" ")
+            command, arg = (text.split(None, 1) + [""])[:2]  # the words can start on the next line
             return self.command(user, command.split("@")[0].lower(), arg.strip())
         if user["step"] in ("keywords", "keywords_edit", "keywords_review"):
             return self.set_keywords(user, text)
         if user["step"] in ("journal", "journal_edit", "journal_review"):
             return self.find_journal(user, text)
+        if user["step"] == "announce":
+            return self.preview_announcement(user, text)
         doi = find_doi(text)
         if doi:
             return self.summarize_doi(user, doi)
@@ -354,7 +365,7 @@ class Bot:
 
     def command(self, user, cmd, arg):
         uid = user["id"]
-        if user["step"] in ("keywords_edit", "journal_edit", *REVIEW_STEPS):  # a command means they're not answering my question
+        if user["step"] in ("keywords_edit", "journal_edit", "announce", *REVIEW_STEPS):  # a command means they're not answering my question
             self.store.update_user(uid, step="confirm" if user["step"] in REVIEW_STEPS else None)
             user = self.store.user(uid)
         if cmd in ("/start", "/help"):
@@ -384,6 +395,7 @@ class Bot:
             "/privacy": lambda: self.say(uid, PRIVACY),
             "/stop": lambda: self.stop(user),
             "/users": lambda: self.show_users(user),
+            "/announce": lambda: self.announce(user, arg),
         }
         commands.get(cmd, lambda: self.say(uid, HELP))()
 
@@ -417,6 +429,8 @@ class Bot:
             "more": lambda: self.more(user, message_id),
             "search": lambda: self.ask_search(user),
             "smore": lambda: self.search_more(user, value, message_id),
+            "announce": lambda: self.send_announcement(user, value, message_id),
+            "announce_cancel": lambda: self.cancel_announcement(user, message_id),
             "like": lambda: self.react(user, value, 1, message_id),
             "dislike": lambda: self.react(user, value, -1, message_id),
             "save": lambda: self.save(user, value, message_id),
@@ -1359,6 +1373,75 @@ class Bot:
         self.say(user["id"], "\n".join([f"<b>{len(active)} active</b>, {len(pending)} waiting for you."] + names))
         for u in pending:
             self.ask_admin(u)
+
+    # ---------- announcements, from the admin ----------
+    def announce(self, user, text):
+        """/announce: a message to everyone using the bot, sent once the admin has seen a preview. Without
+        the message, asks for it."""
+        if not user["is_admin"]:
+            return self.say(user["id"], HELP)
+        if user["step"] in SETUP_STEPS:
+            return self.say(user["id"], "Finish setting up first.")
+        if not text.strip():
+            self.store.update_user(user["id"], step="announce")
+            return self.say(user["id"], "Send me the message for everyone. Its first line becomes the title, in bold.",
+                            [[button("Cancel", "announce_cancel")]])
+        self.preview_announcement(user, text)
+
+    def preview_announcement(self, user, text):
+        """The announcement as people will see it, then a button to send it."""
+        uid = user["id"]
+        self.store.update_user(uid, step=None)
+        draft = {"id": secrets.token_hex(3), "text": announcement(text)}
+        self.store.put("announcement", json.dumps(draft))
+        n = len(self.audience())
+        self.say(uid, draft["text"])
+        self.say(uid, f"That's how it will look. Send it to {n} {'person' if n == 1 else 'people'}?",
+                 [[button("📣 Send", f"announce:{draft['id']}"), button("Cancel", "announce_cancel")]])
+
+    def audience(self):
+        """Who an announcement goes to: everyone using the bot, but the admin, who has seen it."""
+        return [u for u in self.store.users("active") if u["id"] != self.admin]
+
+    def send_announcement(self, user, draft_id, message_id):
+        """📣 Send, under the preview: once, however often it's tapped."""
+        if user["id"] != self.admin:
+            return None
+        draft = json.loads(self.store.get("announcement") or "{}")
+        if not draft_id or draft.get("id") != draft_id:
+            return "Already sent"
+        self.store.put("announcement", "")
+        people = self.audience()
+        if message_id:
+            self.edit(user["id"], message_id, f"📣 Sending to {len(people)} {'person' if len(people) == 1 else 'people'}…")
+        missed = 0
+        for person in people:
+            try:
+                self.say(person["id"], draft["text"])
+            except Exception as exc:  # one person who can't be reached mustn't stop the rest
+                missed += 1
+                unreachable(person, exc, "announcement")
+            time.sleep(ANNOUNCE_PAUSE)
+        sent = len(people) - missed
+        report = f"📣 Sent to {sent} {'person' if sent == 1 else 'people'}."
+        if missed:
+            report += f" {missed} couldn't be reached, most likely because they blocked the bot or left its Discord server."
+        log.info("Announcement sent to %d people; %d couldn't be reached", sent, missed)
+        if message_id:
+            self.edit(user["id"], message_id, report)
+        else:
+            self.say(user["id"], report)
+        return "Sent"
+
+    def cancel_announcement(self, user, message_id):
+        if user["id"] != self.admin:
+            return None
+        self.store.put("announcement", "")
+        if user["step"] == "announce":
+            self.store.update_user(user["id"], step=None)
+        if message_id:
+            self.edit(user["id"], message_id, "Cancelled: nothing was sent.")
+        return "Cancelled"
 
     # ---------- the schedule ----------
     def tick(self, now=None):

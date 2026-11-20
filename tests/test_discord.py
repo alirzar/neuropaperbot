@@ -385,6 +385,16 @@ store.put("last_update", "2000-01-01")
 result = digest.daily_update(store, cfg, gemini, alert=bot.send_alert)
 check(result["new"] == 1 and store.get("last_update") != "2000-01-01", "the daily update finishes anyway")
 
+print("10b. an announcement from the admin reaches Discord too")
+if store.user(ADMIN) is None:
+    store.add_user(ADMIN, "Ali", None, "active", is_admin=True)
+store.update_user(ADMIN, step=None)
+bot.handle({"update_id": 1, "message": {"chat": {"type": "private"}, "from": {"id": ADMIN, "first_name": "Ali"},
+                                        "text": "/announce News\nSearch is here: just type."}})
+confirm = [p for m, p in tg.calls if m == "sendMessage" and p.get("chat_id") == ADMIN][-1]
+tg_tap(ADMIN, confirm["reply_markup"]["inline_keyboard"][0][0]["callback_data"], message_id=confirm["_id"])
+check(dsc.contents(DEE)[-1] == "📣 **News**\nSearch is here: just type.", f"in Markdown: {dsc.contents(DEE)[-1]!r}")
+
 print("11. leaving")
 command(DEE, "/stop", token="tok-stop")
 check("deleted everything" in dsc.contents(DEE)[-1] and store.user(DEE) is None, "/stop: told on Discord, then deleted")

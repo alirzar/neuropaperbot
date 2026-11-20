@@ -704,6 +704,53 @@ check(digest.search_terms('the role of "short-chain fatty acids" in the infant g
 check(digest.uses_share({"title": "Gut microbes", "abstract": "Infant feeding."}, ["infant", "gut", "milk"]) == 2 / 3,
       "the share of the words a paper uses")
 
+print("12c. announcements")
+everyone = [u["id"] for u in store.users("active") if u["id"] != ADMIN]
+others = [u["id"] for u in store.users() if u["status"] != "active"]
+counts = {uid: len(tg.to(uid)) for uid in everyone + others}
+message(ANA, "/announce Hello, everyone")
+check(tg.last(ANA).startswith("I send you a daily digest") and all(len(tg.to(u)) == counts[u] for u in everyone if u != ANA),
+      "only the admin can announce")
+counts[ANA] = len(tg.to(ANA))
+message(ADMIN, "/announce")
+check(tg.last(ADMIN).startswith("Send me the message for everyone"), "/announce on its own asks for the message")
+message(ADMIN, "New: search for papers\nJust type <anything> & see.")
+preview, confirm = tg.to(ADMIN, "sendMessage")[-2:]
+check(preview["text"] == "📣 <b>New: search for papers</b>\nJust type &lt;anything&gt; &amp; see.", f"a preview, its first line the title: {preview['text']!r}")
+n = len(everyone)
+check(confirm["text"] == f"That's how it will look. Send it to {n} {'person' if n == 1 else 'people'}?"
+      and buttons(confirm) == [["📣 Send", "Cancel"]], f"then a button to send it: {confirm['text']!r}")
+check(all(len(tg.to(u)) == counts[u] for u in everyone), "nothing goes out before that")
+send = confirm["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+tap(ADMIN, send, message_id=confirm["_id"])
+check(n and all(tg.to(u)[-1]["text"] == preview["text"] for u in everyone), "everyone using the bot gets it")
+check(all(len(tg.to(u)) == counts[u] for u in others), "but not people waiting, denied or gone")
+check(tg.edits("editMessageText")[-1]["text"] == f"📣 Sent to {n} {'person' if n == 1 else 'people'}.", "the admin is told it went out")
+tap(ADMIN, send, message_id=confirm["_id"])
+check(answers[-1] == "Already sent", "tapping Send again sends nothing")
+message(ADMIN, "/announce\nA second note\nOn its own line.")
+preview, confirm = tg.to(ADMIN, "sendMessage")[-2:]
+check(preview["text"] == "📣 <b>A second note</b>\nOn its own line.", "the message can start on the line after /announce")
+real_call = telegram_api.call
+
+
+def blocked(method, files=None, **params):
+    if params.get("chat_id") == ANA and method == "sendMessage":
+        raise telegram_api.TelegramError("sendMessage: Forbidden: bot was blocked by the user")
+    return real_call(method, files=files, **params)
+
+
+telegram_api.call = blocked
+tap(ADMIN, confirm["reply_markup"]["inline_keyboard"][0][0]["callback_data"], message_id=confirm["_id"])
+telegram_api.call = real_call
+check("1 couldn't be reached" in tg.edits("editMessageText")[-1]["text"], f"someone who blocked the bot is counted: {tg.edits('editMessageText')[-1]['text']!r}")
+message(ADMIN, "/announce Never mind")
+preview, confirm = tg.to(ADMIN, "sendMessage")[-2:]
+check(preview["text"] == "📣 Never mind", "a one-line message has no title")
+before = len(tg.to(ANA))
+tap(ADMIN, "announce_cancel", message_id=confirm["_id"])
+check(tg.edits("editMessageText")[-1]["text"] == "Cancelled: nothing was sent." and len(tg.to(ANA)) == before, "Cancel sends nothing")
+
 print("13. author alerts")
 message(ANA, "/follow Jane Smith")
 check(store.follows(ANA)[0]["author_key"] == "smith j" and "Smith J." in tg.last(ANA), "following Smith J")
